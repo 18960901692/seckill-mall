@@ -1,0 +1,21 @@
+package com.sygzcd.seckillmall.service;
+
+import com.sygzcd.seckillmall.entity.Product;
+
+public interface ProductService {
+    
+    /**
+     * 根据ID查询商品
+     */
+    Product getById(Long id);
+    
+    /**
+     * 查询商品库存（三级缓存）
+     */
+    Integer getStock(Long id);
+    
+    /**
+     * 预热商品到缓存
+     */
+    void warmUpProduct(Long id);
+}
