@@ -2,12 +2,13 @@ package com.sygzcd.seckillmall.service;
 
 import com.sygzcd.seckillmall.entity.Orders;
 
+import java.util.List;
+
+/**
+ * 订单服务接口
+ * 职责：订单CRUD、取消订单、查询订单
+ */
 public interface OrderService {
-    
-    /**
-     * 创建订单
-     */
-    Orders createOrder(Long userId, Long productId);
     
     /**
      * 根据订单号查询订单
@@ -15,12 +16,12 @@ public interface OrderService {
     Orders getByOrderNo(String orderNo);
     
     /**
-     * 取消订单（超时未支付）
+     * 取消订单（超时未支付，释放库存）
      */
     void cancelOrder(String orderNo);
     
     /**
-     * 查询用户订单列表
+     * 查询用户订单列表（分页）
      */
-    java.util.List<Orders> getUserOrders(Long userId, int page, int size);
+    List<Orders> getUserOrders(Long userId, int page, int size);
 }
