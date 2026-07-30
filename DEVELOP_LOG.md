@@ -36,4 +36,20 @@
 
 ---
 
-## 阶段3：Redis 核心模块 ⏸️ 待开始
+## 阶段3：Redis 核心模块 ✅
+
+**完成时间**：2026-07-30
+
+### 已完成内容
+- RedisConfig：Jackson JSON 序列化配置
+- CaffeineConfig：本地缓存配置（maximumSize=1000，expireAfterWrite=30s）
+- SessionConfig：Spring Session Redis 分布式会话
+- ProductServiceImpl：三级缓存读路径（Caffeine → Redis → MySQL）
+- RankServiceImpl：ZSet 积分排行榜
+- AnswerAsyncServiceImpl：Redis List 异步队列 + 线程池批量落库
+- RedissonConfig：Redisson 分布式锁客户端配置
+- BloomFilterService：Guava 布隆过滤器防缓存穿透
+- 缓存防护增强：互斥锁防击穿（Redisson RLock）、TTL 随机抖动防雪崩（ThreadLocalRandom）
+
+### 编译验证
+- `mvn clean compile` ✅ 通过
