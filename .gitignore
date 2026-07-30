@@ -31,3 +31,6 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### Private docs ###
+高并发学习商城秒杀系统-项目规划.md
