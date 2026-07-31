@@ -1,5 +1,6 @@
 package com.sygzcd.seckillmall.config;
 
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.core.*;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
@@ -9,7 +10,9 @@ import org.springframework.context.annotation.Configuration;
 /**
  * RabbitMQ 配置
  * 死信队列 + TTL 实现 30 分钟未支付自动取消
+ * 消息可靠性三板斧：Confirm + 持久化 + 手动ACK
  */
+@Slf4j
 @Configuration
 public class RabbitMQConfig {
 
@@ -45,7 +48,7 @@ public class RabbitMQConfig {
     }
 
     /**
-     * 延时队列（设置 TTL + 死信交换机）
+     * 延时队列（持久化 + 设置 TTL + 死信交换机）
      */
     @Bean
     public Queue orderDelayQueue() {
@@ -57,7 +60,7 @@ public class RabbitMQConfig {
     }
 
     /**
-     * 死信队列（接收超时消息）
+     * 死信队列（持久化，接收超时消息）
      */
     @Bean
     public Queue orderCancelQueue() {
@@ -86,23 +89,27 @@ public class RabbitMQConfig {
 
     /**
      * RabbitTemplate 配置：开启 Confirm + Return 机制
+     * Confirm：消息是否到达交换机
+     * Return：消息是否到达队列（路由失败时回调）
      */
     @Bean
     public RabbitTemplate rabbitTemplate(ConnectionFactory connectionFactory) {
         RabbitTemplate template = new RabbitTemplate(connectionFactory);
         template.setMandatory(true);
 
-        // 生产者 Confirm 回调
+        // 生产者 Confirm 回调：消息是否到达交换机
         template.setConfirmCallback((correlationData, ack, cause) -> {
             if (!ack) {
-                // 消息未到达交换机，记录日志
-                System.err.println("消息发送失败: " + cause);
+                log.error("消息发送到交换机失败，原因: {}", cause);
             }
         });
 
-        // 生产者 Return 回调
+        // 生产者 Return 回调：消息路由失败（交换机到队列失败）
         template.setReturnsCallback(returned -> {
-            System.err.println("消息路由失败: " + returned.getMessage());
+            log.error("消息路由失败，消息: {}，回复码: {}，回复文本: {}",
+                    returned.getMessage(),
+                    returned.getReplyCode(),
+                    returned.getReplyText());
         });
 
         return template;

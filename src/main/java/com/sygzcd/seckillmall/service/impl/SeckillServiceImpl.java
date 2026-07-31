@@ -1,7 +1,6 @@
 package com.sygzcd.seckillmall.service.impl;
 
 import com.sygzcd.seckillmall.common.BusinessException;
-import com.sygzcd.seckillmall.config.RabbitMQConfig;
 import com.sygzcd.seckillmall.entity.Orders;
 import com.sygzcd.seckillmall.entity.Product;
 import com.sygzcd.seckillmall.mapper.OrdersMapper;
@@ -9,10 +8,10 @@ import com.sygzcd.seckillmall.mapper.ProductMapper;
 import com.sygzcd.seckillmall.service.BloomFilterService;
 import com.sygzcd.seckillmall.service.ProductService;
 import com.sygzcd.seckillmall.service.SeckillService;
+import com.sygzcd.seckillmall.service.mq.OrderDelayProducer;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
-import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
@@ -48,7 +47,7 @@ public class SeckillServiceImpl implements SeckillService {
     private RedissonClient redissonClient;
 
     @Autowired
-    private RabbitTemplate rabbitTemplate;
+    private OrderDelayProducer orderDelayProducer;
 
     private static final String STOCK_KEY = "seckill:stock:";
     private static final String USER_SECKILL_KEY = "seckill:user:";
@@ -122,17 +121,8 @@ public class SeckillServiceImpl implements SeckillService {
             ordersMapper.insert(order);
 
             // 8. 发送延时消息（30分钟未支付自动取消）
-            try {
-                rabbitTemplate.convertAndSend(
-                        RabbitMQConfig.ORDER_DELAY_EXCHANGE,
-                        RabbitMQConfig.ORDER_DELAY_ROUTING_KEY,
-                        orderNo
-                );
-                log.info("秒杀下单成功，订单号: {}, 商品ID: {}, 用户ID: {}", orderNo, productId, userId);
-            } catch (Exception e) {
-                log.error("发送延时消息失败，订单号: {}", orderNo, e);
-                // 消息发送失败不影响下单，可记录补偿日志后续重试
-            }
+            orderDelayProducer.sendDelayMessage(orderNo);
+            log.info("秒杀下单成功，订单号: {}, 商品ID: {}, 用户ID: {}", orderNo, productId, userId);
 
             return order;
 
