@@ -1,12 +1,15 @@
 package com.sygzcd.seckillmall.controller;
 
 import com.sygzcd.seckillmall.common.Result;
+import com.sygzcd.seckillmall.entity.User;
 import com.sygzcd.seckillmall.service.RankService;
+import com.sygzcd.seckillmall.service.UserService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -18,6 +21,9 @@ public class RankController {
     @Autowired
     private RankService rankService;
 
+    @Autowired
+    private UserService userService;
+
     @Operation(summary = "获取 Top N 排行榜")
     @GetMapping("/top")
     public Result<List<Map<String, Object>>> getTopN(
@@ -26,10 +32,22 @@ public class RankController {
         return Result.success(list);
     }
 
-    @Operation(summary = "查询我的排名")
+    @Operation(summary = "查询我的排名和积分")
     @GetMapping("/my")
     public Result<Map<String, Object>> getMyRank() {
-        // 这里需要从 Session 获取当前用户，简化处理
-        return Result.success(null);
+        User user = userService.getCurrentUser();
+        if (user == null) {
+            return Result.fail(401, "未登录");
+        }
+        Double score = rankService.getUserScore(user.getId());
+        Long rank = rankService.getUserRank(user.getId());
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("userId", user.getId());
+        result.put("username", user.getUsername());
+        result.put("score", score != null ? score : 0);
+        result.put("rank", rank != null ? rank : -1);
+
+        return Result.success(result);
     }
 }

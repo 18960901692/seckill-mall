@@ -54,9 +54,10 @@ public class UserServiceImpl implements UserService {
             throw new BusinessException("用户名或密码错误");
         }
 
-        // 登录成功，写入 Session
+        // 登录成功，写入 Session（存 userId 供业务层使用）
         session.setAttribute("user", user);
-        
+        session.setAttribute("userId", user.getId());
+
         return user;
     }
 

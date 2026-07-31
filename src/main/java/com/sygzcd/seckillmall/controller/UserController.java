@@ -27,6 +27,8 @@ public class UserController {
     @PostMapping("/login")
     public Result<User> login(@RequestParam String username, @RequestParam String password) {
         User user = userService.login(username, password);
+        // 密码脱敏，不返回给前端
+        user.setPassword(null);
         return Result.success(user);
     }
 
@@ -34,6 +36,9 @@ public class UserController {
     @GetMapping("/current")
     public Result<User> getCurrentUser() {
         User user = userService.getCurrentUser();
+        if (user != null) {
+            user.setPassword(null);
+        }
         return Result.success(user);
     }
 
