@@ -3,6 +3,7 @@ package com.sygzcd.seckillmall.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.sygzcd.seckillmall.config.CacheInvalidateConfig;
 import com.sygzcd.seckillmall.entity.Orders;
 import com.sygzcd.seckillmall.entity.Product;
 import com.sygzcd.seckillmall.mapper.OrdersMapper;
@@ -34,6 +35,7 @@ public class OrderServiceImpl implements OrderService {
     private RedisTemplate<String, Object> redisTemplate;
 
     private static final String STOCK_KEY = "seckill:stock:";
+    private static final String PRODUCT_KEY = "product:";
     private static final String USER_SECKILL_KEY = "seckill:user:";
 
     @Override
@@ -65,6 +67,12 @@ public class OrderServiceImpl implements OrderService {
         // 回滚 Redis 库存
         String stockKey = STOCK_KEY + order.getProductId();
         redisTemplate.opsForValue().increment(stockKey);
+
+        // 删除商品缓存，发布失效广播通知其他实例清除 Caffeine
+        String productKey = PRODUCT_KEY + order.getProductId();
+        redisTemplate.delete(productKey);
+        redisTemplate.convertAndSend(CacheInvalidateConfig.CACHE_INVALIDATE_CHANNEL, stockKey);
+        redisTemplate.convertAndSend(CacheInvalidateConfig.CACHE_INVALIDATE_CHANNEL, productKey);
 
         // 删除用户抢购记录，允许重新抢购
         String userKey = USER_SECKILL_KEY + order.getProductId() + ":" + order.getUserId();

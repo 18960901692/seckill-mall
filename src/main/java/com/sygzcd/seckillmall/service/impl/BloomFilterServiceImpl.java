@@ -7,19 +7,20 @@ import com.sygzcd.seckillmall.mapper.ProductMapper;
 import com.sygzcd.seckillmall.service.BloomFilterService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.CommandLineRunner;
 import org.springframework.stereotype.Service;
 
 import jakarta.annotation.PostConstruct;
-import java.nio.charset.Charset;
 import java.util.List;
 
 /**
  * 布隆过滤器服务实现
  * 使用 Guava BloomFilter 防缓存穿透
+ * 启动时自动预热全量商品ID
  */
 @Slf4j
 @Service
-public class BloomFilterServiceImpl implements BloomFilterService {
+public class BloomFilterServiceImpl implements BloomFilterService, CommandLineRunner {
 
     @Autowired
     private ProductMapper productMapper;
@@ -39,6 +40,14 @@ public class BloomFilterServiceImpl implements BloomFilterService {
                 0.01    // 误判率
         );
         log.info("布隆过滤器初始化完成，预期容量：10000，误判率：0.01");
+    }
+
+    /**
+     * 项目启动后自动预热全量商品ID
+     */
+    @Override
+    public void run(String... args) {
+        init();
     }
 
     /**
