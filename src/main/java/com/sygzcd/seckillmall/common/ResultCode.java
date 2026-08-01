@@ -17,7 +17,8 @@ public enum ResultCode {
     SECKILL_FAIL(1001, "秒杀失败"),
     STOCK_EMPTY(1002, "库存不足"),
     REPEAT_ORDER(1003, "重复下单"),
-    ORDER_TIMEOUT(1004, "订单超时");
+    ORDER_TIMEOUT(1004, "订单超时"),
+    BLACK_LISTED(403, "已被加入黑名单，请联系管理员");
 
     private final Integer code;
     private final String message;

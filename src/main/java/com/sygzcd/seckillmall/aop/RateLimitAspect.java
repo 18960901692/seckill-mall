@@ -3,7 +3,9 @@ package com.sygzcd.seckillmall.aop;
 import com.sygzcd.seckillmall.aop.annotation.RateLimit;
 import com.sygzcd.seckillmall.common.Result;
 import com.sygzcd.seckillmall.common.ResultCode;
+import com.sygzcd.seckillmall.service.BlackListService;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpSession;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
@@ -20,6 +22,7 @@ import java.util.concurrent.Semaphore;
 /**
  * 限流切面
  * 本地 Semaphore + Redis ZSet 滑动窗口双重限流
+ * 限流触发时记录违规次数，超过阈值自动加入黑名单
  */
 @Aspect
 @Component
@@ -27,6 +30,9 @@ public class RateLimitAspect {
 
     @Autowired
     private RedisTemplate<String, Object> redisTemplate;
+
+    @Autowired
+    private BlackListService blackListService;
 
     // 本地信号量：单机限流 100 并发
     private final Semaphore semaphore = new Semaphore(100);
@@ -55,11 +61,12 @@ public class RateLimitAspect {
         }
         
         HttpServletRequest request = attributes.getRequest();
-        String ip = request.getRemoteAddr();
+        String ip = getClientIp(request);
         String key = rateLimit.keyPrefix() + ":" + ip;
 
         // 第一层：本地 Semaphore 限流
         if (!semaphore.tryAcquire()) {
+            recordViolation(request, ip);
             return Result.fail(ResultCode.RATE_LIMIT);
         }
 
@@ -77,6 +84,7 @@ public class RateLimitAspect {
             );
 
             if (result == null || result == 0) {
+                recordViolation(request, ip);
                 return Result.fail(ResultCode.RATE_LIMIT);
             }
 
@@ -85,5 +93,37 @@ public class RateLimitAspect {
         } finally {
             semaphore.release();
         }
+    }
+
+    /**
+     * 记录违规次数，超过阈值自动拉黑
+     * 同时记录 IP 和已登录用户的违规
+     */
+    private void recordViolation(HttpServletRequest request, String ip) {
+        // 记录 IP 违规
+        blackListService.recordViolation("ip", ip);
+
+        // 如果已登录，同时记录用户违规
+        HttpSession session = request.getSession(false);
+        if (session != null && session.getAttribute("userId") != null) {
+            blackListService.recordViolation("user", session.getAttribute("userId").toString());
+        }
+    }
+
+    /**
+     * 获取客户端真实 IP，处理代理穿透
+     */
+    private String getClientIp(HttpServletRequest request) {
+        String ip = request.getHeader("X-Forwarded-For");
+        if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
+            ip = request.getHeader("X-Real-IP");
+        }
+        if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
+            ip = request.getRemoteAddr();
+        }
+        if (ip != null && ip.contains(",")) {
+            ip = ip.split(",")[0].trim();
+        }
+        return ip;
     }
 }

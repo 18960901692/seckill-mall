@@ -32,7 +32,7 @@ public class SeckillController {
      * @return 订单信息
      */
     @PostMapping("/{productId}")
-    @RateLimit(windowSec = 10, maxCount = 5, keyPrefix = "ratelimit:seckill")
+    @RateLimit(windowSec = 1, maxCount = 10000, keyPrefix = "ratelimit:seckill")
     @Operation(summary = "秒杀下单", description = "用户参与秒杀活动，成功则创建订单")
     public Result<Orders> seckill(
             @Parameter(description = "商品ID", required = true)
