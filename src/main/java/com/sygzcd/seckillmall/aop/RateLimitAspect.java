@@ -10,13 +10,15 @@ import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Component;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.util.Collections;
+import java.util.UUID;
 import java.util.concurrent.Semaphore;
 
 /**
@@ -29,7 +31,7 @@ import java.util.concurrent.Semaphore;
 public class RateLimitAspect {
 
     @Autowired
-    private RedisTemplate<String, Object> redisTemplate;
+    private StringRedisTemplate stringRedisTemplate;
 
     @Autowired
     private BlackListService blackListService;
@@ -37,20 +39,17 @@ public class RateLimitAspect {
     // 本地信号量：单机限流 100 并发
     private final Semaphore semaphore = new Semaphore(100);
 
-    // Lua 脚本：滑动窗口限流
-    private static final String LUA_SCRIPT =
-            "local key = KEYS[1] " +
-            "local window = tonumber(ARGV[1]) " +
-            "local limit = tonumber(ARGV[2]) " +
-            "local now = tonumber(ARGV[3]) " +
-            "redis.call('ZREMRANGEBYSCORE', key, 0, now - window) " +
-            "local count = redis.call('ZCARD', key) " +
-            "if count >= limit then " +
+    // Lua 脚本：滑动窗口限流（使用 StringRedisTemplate，参数全部传字符串）
+    private static final RedisScript<Long> SLIDING_WINDOW_SCRIPT = new DefaultRedisScript<>(
+            "redis.call('ZREMRANGEBYSCORE', KEYS[1], 0, ARGV[1] - ARGV[2]) " +
+            "local cnt = redis.call('ZCARD', KEYS[1]) " +
+            "if cnt < tonumber(ARGV[3]) then " +
+            "  redis.call('ZADD', KEYS[1], ARGV[1], ARGV[4]) " +
+            "  redis.call('EXPIRE', KEYS[1], ARGV[5]) " +
+            "  return 1 " +
+            "else " +
             "  return 0 " +
-            "end " +
-            "redis.call('ZADD', key, now, now .. '-' .. math.random(1000000)) " +
-            "redis.call('PEXPIRE', key, window * 1000) " +
-            "return 1";
+            "end", Long.class);
 
     @Around("@annotation(rateLimit)")
     public Object around(ProceedingJoinPoint pjp, RateLimit rateLimit) throws Throwable {
@@ -71,16 +70,16 @@ public class RateLimitAspect {
         }
 
         try {
-            // 第二层：Redis ZSet 滑动窗口限流
+            // 第二层：Redis ZSet 滑动窗口限流（参数全部转字符串，避免序列化问题）
             long now = System.currentTimeMillis();
-            DefaultRedisScript<Long> script = new DefaultRedisScript<>(LUA_SCRIPT, Long.class);
-            
-            Long result = redisTemplate.execute(
-                    script,
+            Long result = stringRedisTemplate.execute(
+                    SLIDING_WINDOW_SCRIPT,
                     Collections.singletonList(key),
-                    rateLimit.windowSec(),
-                    rateLimit.maxCount(),
-                    now
+                    String.valueOf(now),                      // ARGV[1] 当前时间戳(ms)
+                    String.valueOf(rateLimit.windowSec() * 1000L),  // ARGV[2] 窗口(ms)
+                    String.valueOf(rateLimit.maxCount()),     // ARGV[3] 最大次数
+                    UUID.randomUUID().toString(),             // ARGV[4] 唯一标识
+                    String.valueOf(rateLimit.windowSec())     // ARGV[5] 过期时间(秒)
             );
 
             if (result == null || result == 0) {
