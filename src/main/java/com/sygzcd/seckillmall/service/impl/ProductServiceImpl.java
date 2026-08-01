@@ -29,7 +29,7 @@ public class ProductServiceImpl implements ProductService {
     private RedissonClient redissonClient;
 
     private static final String PRODUCT_KEY = "product:";
-    private static final String STOCK_KEY = "product:stock:";
+    private static final String STOCK_KEY = "seckill:stock:";
     private static final String LOCK_KEY = "lock:product:";
 
     @Override
