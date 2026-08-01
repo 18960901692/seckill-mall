@@ -7,19 +7,27 @@ import com.sygzcd.seckillmall.mapper.UserMapper;
 import com.sygzcd.seckillmall.service.UserService;
 import jakarta.servlet.http.HttpSession;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
+import java.util.concurrent.TimeUnit;
+
 @Service
 public class UserServiceImpl implements UserService {
+
+    private static final String LOGIN_SESSION_KEY = "login:session:";
 
     @Autowired
     private UserMapper userMapper;
 
     @Autowired
     private HttpSession session;
+
+    @Autowired
+    private StringRedisTemplate stringRedisTemplate;
 
     private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
 
@@ -58,6 +66,13 @@ public class UserServiceImpl implements UserService {
         session.setAttribute("user", user);
         session.setAttribute("userId", user.getId());
 
+        // 防多地登录：将 userId → sessionId 存入 Redis，后续请求校验一致性
+        stringRedisTemplate.opsForValue().set(
+                LOGIN_SESSION_KEY + user.getId(),
+                session.getId(),
+                24, TimeUnit.HOURS
+        );
+
         return user;
     }
 
@@ -82,6 +97,11 @@ public class UserServiceImpl implements UserService {
         if (attributes != null) {
             HttpSession session = attributes.getRequest().getSession(false);
             if (session != null) {
+                // 清除 Redis 中的登录映射
+                User user = (User) session.getAttribute("user");
+                if (user != null) {
+                    stringRedisTemplate.delete(LOGIN_SESSION_KEY + user.getId());
+                }
                 session.invalidate();
             }
         }
