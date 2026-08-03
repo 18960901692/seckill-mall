@@ -15,7 +15,7 @@ import org.redisson.api.RedissonClient;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -49,12 +49,14 @@ public class SeckillServiceImpl implements SeckillService {
     @Autowired
     private OrderDelayProducer orderDelayProducer;
 
+    @Autowired
+    private TransactionTemplate transactionTemplate;
+
     private static final String STOCK_KEY = "seckill:stock:";
     private static final String USER_SECKILL_KEY = "seckill:user:";
     private static final String LOCK_KEY = "seckill:lock:";
 
     @Override
-    @Transactional(rollbackFor = Exception.class)
     public Orders seckill(Long userId, Long productId) {
         // 1. 布隆过滤器防缓存穿透
         if (!bloomFilterService.mightContain(productId)) {
@@ -71,19 +73,19 @@ public class SeckillServiceImpl implements SeckillService {
         // 3. 三级缓存查库存（快速失败）
         Integer stock = productService.getStock(productId);
         if (stock == null || stock <= 0) {
-            redisTemplate.delete(userKey); // 回滚防重标记
+            redisTemplate.delete(userKey);
             throw new BusinessException("商品已售罄");
         }
 
-        // 4. 分布式锁串行化（Redisson 可重入锁 + 看门狗自动续期）
+        // 4. 分布式锁串行化
         String lockKey = LOCK_KEY + productId;
         RLock lock = redissonClient.getLock(lockKey);
+        boolean locked = false;
 
         try {
-            // 尝试获取锁，最多等待3秒，持有锁最多10秒
-            boolean locked = lock.tryLock(3, 10, TimeUnit.SECONDS);
+            locked = lock.tryLock(3, 10, TimeUnit.SECONDS);
             if (!locked) {
-                redisTemplate.delete(userKey); // 回滚防重标记
+                redisTemplate.delete(userKey);
                 throw new BusinessException("系统繁忙，请稍后重试");
             }
 
@@ -91,53 +93,61 @@ public class SeckillServiceImpl implements SeckillService {
             String stockKey = STOCK_KEY + productId;
             Long remainStock = redisTemplate.opsForValue().decrement(stockKey);
             if (remainStock == null || remainStock < 0) {
-                // 库存不足，回滚 Redis 和防重标记
                 redisTemplate.opsForValue().increment(stockKey);
                 redisTemplate.delete(userKey);
                 throw new BusinessException("商品已售罄");
             }
 
-            // 6. MySQL 乐观锁扣库存（最终兜底）
-            Product product = productMapper.selectById(productId);
-            if (product == null) {
-                throw new BusinessException("商品不存在");
-            }
+            // 6. MySQL 操作（编程式事务，事务提交后才解锁，避免超卖窗口）
+            Orders order;
+            try {
+                order = transactionTemplate.execute(status -> {
+                    Product product = productMapper.selectById(productId);
+                    if (product == null) {
+                        throw new BusinessException("商品不存在");
+                    }
 
-            int affected = productMapper.decreaseStockWithVersion(productId, product.getVersion());
-            if (affected == 0) {
-                // 乐观锁失败，回滚 Redis 预扣和防重标记
+                    int affected = productMapper.decreaseStockWithVersion(productId, product.getVersion());
+                    if (affected == 0) {
+                        throw new BusinessException("手慢了，商品已售罄");
+                    }
+
+                    // 7. 创建订单（唯一索引保证幂等）
+                    String orderNo = UUID.randomUUID().toString().replace("-", "").substring(0, 32);
+                    Orders newOrder = new Orders();
+                    newOrder.setOrderNo(orderNo);
+                    newOrder.setUserId(userId);
+                    newOrder.setProductId(productId);
+                    newOrder.setStatus(0);
+                    ordersMapper.insert(newOrder);
+
+                    // 8. 发送延时消息
+                    orderDelayProducer.sendDelayMessage(orderNo);
+                    log.info("秒杀下单成功，订单号: {}, 商品ID: {}, 用户ID: {}", orderNo, productId, userId);
+
+                    return newOrder;
+                });
+            } catch (BusinessException e) {
+                // MySQL 操作失败（乐观锁冲突等），回滚 Redis 预扣和防重标记
                 redisTemplate.opsForValue().increment(stockKey);
                 redisTemplate.delete(userKey);
-                throw new BusinessException("手慢了，商品已售罄");
+                throw e;
             }
-
-            // 7. 创建订单（唯一索引保证幂等）
-            String orderNo = UUID.randomUUID().toString().replace("-", "").substring(0, 32);
-            Orders order = new Orders();
-            order.setOrderNo(orderNo);
-            order.setUserId(userId);
-            order.setProductId(productId);
-            order.setStatus(0); // 0=未支付
-            ordersMapper.insert(order);
-
-            // 8. 发送延时消息（30分钟未支付自动取消）
-            orderDelayProducer.sendDelayMessage(orderNo);
-            log.info("秒杀下单成功，订单号: {}, 商品ID: {}, 用户ID: {}", orderNo, productId, userId);
 
             return order;
 
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            redisTemplate.delete(userKey); // 回滚防重标记
+            redisTemplate.delete(userKey);
             throw new BusinessException("系统繁忙");
         } catch (BusinessException e) {
             throw e;
         } catch (Exception e) {
             log.error("秒杀下单异常，用户ID: {}, 商品ID: {}", userId, productId, e);
-            redisTemplate.delete(userKey); // 回滚防重标记
+            redisTemplate.delete(userKey);
             throw new BusinessException("秒杀失败，请稍后重试");
         } finally {
-            if (lock.isHeldByCurrentThread()) {
+            if (locked) {
                 lock.unlock();
             }
         }
