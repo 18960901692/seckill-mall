@@ -128,6 +128,9 @@ public class SeckillServiceImpl implements SeckillService {
 
                     return newOrder;
                 });
+                
+                // 9. 事务提交后失效商品缓存（确保其他事务读到新数据）
+                productService.invalidateCache(productId);
             } catch (BusinessException e) {
                 // MySQL 操作失败（乐观锁冲突等），回滚 Redis 预扣和防重标记
                 redisTemplate.opsForValue().increment(stockKey);

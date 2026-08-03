@@ -1,9 +1,11 @@
 package com.sygzcd.seckillmall.service.impl;
 
 import com.github.benmanes.caffeine.cache.Cache;
+import com.sygzcd.seckillmall.config.CacheInvalidateConfig;
 import com.sygzcd.seckillmall.entity.Product;
 import com.sygzcd.seckillmall.mapper.ProductMapper;
 import com.sygzcd.seckillmall.service.ProductService;
+import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -13,6 +15,7 @@ import org.springframework.stereotype.Service;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 
+@Slf4j
 @Service
 public class ProductServiceImpl implements ProductService {
 
@@ -143,5 +146,29 @@ public class ProductServiceImpl implements ProductService {
             caffeineCache.put(key, product);
             caffeineCache.put(stockKey, product.getStock());
         }
+    }
+
+    /**
+     * 失效商品缓存
+     * 清除 Redis product:{id} + 失效 Caffeine 本地缓存 + 广播通知其他实例
+     */
+    @Override
+    public void invalidateCache(Long id) {
+        String key = PRODUCT_KEY + id;
+        String stockKey = STOCK_KEY + id;
+
+        // 1. 清除 Redis 缓存
+        redisTemplate.delete(key);
+        redisTemplate.delete(stockKey);
+
+        // 2. 失效本地 Caffeine 缓存
+        caffeineCache.invalidate(key);
+        caffeineCache.invalidate(stockKey);
+
+        // 3. 广播通知其他实例清除本地 Caffeine
+        redisTemplate.convertAndSend(CacheInvalidateConfig.CACHE_INVALIDATE_CHANNEL, key);
+        redisTemplate.convertAndSend(CacheInvalidateConfig.CACHE_INVALIDATE_CHANNEL, stockKey);
+
+        log.debug("商品缓存已失效，商品ID: {}", id);
     }
 }

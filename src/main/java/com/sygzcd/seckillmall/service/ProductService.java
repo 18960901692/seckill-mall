@@ -18,4 +18,9 @@ public interface ProductService {
      * 预热商品到缓存
      */
     void warmUpProduct(Long id);
+    
+    /**
+     * 失效商品缓存（Caffeine + Redis + 广播通知其他实例）
+     */
+    void invalidateCache(Long id);
 }
