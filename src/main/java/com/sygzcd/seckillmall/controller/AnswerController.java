@@ -3,7 +3,6 @@ package com.sygzcd.seckillmall.controller;
 import com.sygzcd.seckillmall.common.Result;
 import com.sygzcd.seckillmall.entity.User;
 import com.sygzcd.seckillmall.service.AnswerAsyncService;
-import com.sygzcd.seckillmall.service.RankService;
 import com.sygzcd.seckillmall.service.UserService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -21,9 +20,6 @@ public class AnswerController {
     @Autowired
     private UserService userService;
 
-    @Autowired
-    private RankService rankService;
-
     @Operation(summary = "提交答题记录")
     @PostMapping("/submit")
     public Result<Void> submitAnswer(
@@ -33,12 +29,8 @@ public class AnswerController {
         if (user == null) {
             return Result.fail(401, "未登录");
         }
-        // 异步写入 Redis List，不阻塞主线程
+        // 异步写入 Redis List，不阻塞主线程（async 内部已处理加分逻辑）
         answerAsyncService.submitAnswerAsync(user.getId(), questionId, correct);
-        // 答对加分到排行榜
-        if (correct) {
-            rankService.addScore(user.getId(), 10);
-        }
         return Result.success();
     }
 
