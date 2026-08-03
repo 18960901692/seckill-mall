@@ -37,12 +37,13 @@ public class WebMvcConfig implements WebMvcConfigurer {
                 .order(0);
 
         // 登录拦截器：在黑名单之后执行
+        // 注意：/api/blacklist/** 仅从黑名单拦截器排除（否则被拉黑后无法管理），
+        // 但必须经过登录拦截器，防止匿名用户拉黑/解除他人
         registry.addInterceptor(authInterceptor)
                 .addPathPatterns("/api/**")
                 .excludePathPatterns(
                         "/api/user/login",
                         "/api/user/register",
-                        "/api/blacklist/**",
                         "/api/test/**",
                         "/doc.html",
                         "/webjars/**",
