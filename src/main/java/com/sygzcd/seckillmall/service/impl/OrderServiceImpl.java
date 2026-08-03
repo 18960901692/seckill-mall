@@ -54,7 +54,13 @@ public class OrderServiceImpl implements OrderService {
         }
 
         // 物理删除订单（配合唯一索引 uk_user_product，允许用户取消后重新抢购）
-        ordersMapper.deleteById(order.getId());
+        // 并发场景：MQ死信消息与手动取消同时触发时，先执行的事务删除成功并回滚库存，
+        // 后执行的事务 deleteById 返回 0，必须直接返回，避免库存被回滚两次
+        int deleted = ordersMapper.deleteById(order.getId());
+        if (deleted == 0) {
+            log.info("订单已被其他请求取消，跳过库存回滚，订单号: {}", orderNo);
+            return;
+        }
 
         // 回滚 MySQL 库存（原子操作）
         productMapper.update(null, 
