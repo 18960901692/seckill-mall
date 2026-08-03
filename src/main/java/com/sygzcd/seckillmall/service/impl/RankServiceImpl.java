@@ -18,7 +18,7 @@ public class RankServiceImpl implements RankService {
 
     @Override
     public void addScore(Long userId, double score) {
-        redisTemplate.opsForZSet().add(RANK_KEY, userId.toString(), score);
+        redisTemplate.opsForZSet().incrementScore(RANK_KEY, userId.toString(), score);
     }
 
     @Override
