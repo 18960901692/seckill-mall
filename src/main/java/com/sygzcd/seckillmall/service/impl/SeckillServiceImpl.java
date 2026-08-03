@@ -80,6 +80,7 @@ public class SeckillServiceImpl implements SeckillService {
         // 4. 分布式锁串行化
         String lockKey = LOCK_KEY + productId;
         RLock lock = redissonClient.getLock(lockKey);
+        String stockKey = STOCK_KEY + productId;
         boolean locked = false;
 
         try {
@@ -90,7 +91,6 @@ public class SeckillServiceImpl implements SeckillService {
             }
 
             // 5. Redis 预扣库存（原子操作）
-            String stockKey = STOCK_KEY + productId;
             Long remainStock = redisTemplate.opsForValue().decrement(stockKey);
             if (remainStock == null || remainStock < 0) {
                 redisTemplate.opsForValue().increment(stockKey);
@@ -144,6 +144,7 @@ public class SeckillServiceImpl implements SeckillService {
             throw e;
         } catch (Exception e) {
             log.error("秒杀下单异常，用户ID: {}, 商品ID: {}", userId, productId, e);
+            redisTemplate.opsForValue().increment(stockKey); // 回滚 Redis 预扣库存
             redisTemplate.delete(userKey);
             throw new BusinessException("秒杀失败，请稍后重试");
         } finally {
