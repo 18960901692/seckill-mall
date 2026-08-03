@@ -112,7 +112,8 @@ public class SeckillServiceImpl implements SeckillService {
                         throw new BusinessException("手慢了，商品已售罄");
                     }
 
-                    // 7. 创建订单（唯一索引保证幂等）
+                    // 7. 创建订单（DB唯一索引 uk_user_product 兜底幂等，
+                    //    防 Redis 防重 key 过期/故障后的重复下单）
                     String orderNo = UUID.randomUUID().toString().replace("-", "").substring(0, 32);
                     Orders newOrder = new Orders();
                     newOrder.setOrderNo(orderNo);

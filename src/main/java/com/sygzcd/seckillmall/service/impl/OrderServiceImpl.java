@@ -53,9 +53,8 @@ public class OrderServiceImpl implements OrderService {
             return; // 订单不存在或已处理
         }
 
-        // 更新订单状态为已取消
-        order.setStatus(2);
-        ordersMapper.updateById(order);
+        // 物理删除订单（配合唯一索引 uk_user_product，允许用户取消后重新抢购）
+        ordersMapper.deleteById(order.getId());
 
         // 回滚 MySQL 库存（原子操作）
         productMapper.update(null, 
@@ -78,7 +77,7 @@ public class OrderServiceImpl implements OrderService {
         String userKey = USER_SECKILL_KEY + order.getProductId() + ":" + order.getUserId();
         redisTemplate.delete(userKey);
 
-        log.info("订单取消成功，订单号: {}, 商品ID: {}, 用户ID: {}", orderNo, order.getProductId(), order.getUserId());
+        log.info("订单取消成功（物理删除），订单号: {}, 商品ID: {}, 用户ID: {}", orderNo, order.getProductId(), order.getUserId());
     }
 
     @Override

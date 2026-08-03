@@ -16,17 +16,20 @@ CREATE TABLE IF NOT EXISTS product (
     create_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='商品表';
 
--- 订单表（唯一订单号做幂等；联合索引加速分页）
+-- 订单表（用户+商品唯一索引兜底幂等，防 Redis 防重失效后的重复下单）
 CREATE TABLE IF NOT EXISTS orders (
     id          BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '订单ID',
-    order_no    VARCHAR(64) NOT NULL COMMENT '唯一订单号(幂等)',
+    order_no    VARCHAR(64) NOT NULL COMMENT '订单号',
     user_id     BIGINT NOT NULL COMMENT '用户ID',
     product_id  BIGINT NOT NULL COMMENT '商品ID',
     status      TINYINT NOT NULL DEFAULT 0 COMMENT '订单状态: 0未支付 1已支付 2已取消',
     create_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    UNIQUE KEY uk_order_no (order_no),
-    KEY idx_user_product_ct (user_id, product_id, create_time)
+    UNIQUE KEY uk_user_product (user_id, product_id),
+    KEY idx_product_ct (product_id, create_time)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='订单表';
+
+-- 对已存在的表补充唯一索引（幂等兜底，重复执行会因索引已存在而报错，可忽略）
+ALTER TABLE orders ADD UNIQUE KEY uk_user_product (user_id, product_id);
 
 -- 用户表（分布式 Session 关联，密码 BCrypt 加密存储）
 CREATE TABLE IF NOT EXISTS user (
