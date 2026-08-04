@@ -43,5 +43,5 @@ public interface BlackListService {
      * @param type 类型："ip" 或 "user"
      * @return 黑名单成员集合
      */
-    Set<Object> getBlackList(String type);
+    Set<String> getBlackList(String type);
 }

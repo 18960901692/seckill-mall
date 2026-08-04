@@ -36,8 +36,8 @@ public class BlackListController {
 
     @Operation(summary = "获取黑名单列表")
     @GetMapping("/list")
-    public Result<Set<Object>> list(@RequestParam String type) {
-        Set<Object> list = blackListService.getBlackList(type);
+    public Result<Set<String>> list(@RequestParam String type) {
+        Set<String> list = blackListService.getBlackList(type);
         return Result.success(list);
     }
 
