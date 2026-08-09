@@ -7,6 +7,7 @@ import com.sygzcd.seckillmall.mapper.UserMapper;
 import com.sygzcd.seckillmall.service.UserService;
 import jakarta.servlet.http.HttpSession;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -46,8 +47,13 @@ public class UserServiceImpl implements UserService {
         User user = new User();
         user.setUsername(username);
         user.setPassword(encodedPassword);
-        
-        userMapper.insert(user);
+
+        try {
+            userMapper.insert(user);
+        } catch (DuplicateKeyException e) {
+            // 并发场景下两个请求同时通过查重检查，MySQL 唯一索引 uk_username 兜底
+            throw new BusinessException("用户名已存在");
+        }
     }
 
     @Override
