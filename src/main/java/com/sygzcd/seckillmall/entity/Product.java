@@ -36,8 +36,10 @@ public class Product {
 
     /**
      * 乐观锁版本号
+     * 注意：不使用 MyBatis-Plus @Version 注解，因为该注解只对 updateById 生效，
+     * 而秒杀扣库存需要 DB 原子递减（stock = stock - 1），updateById 做不到。
+     * 版本号检查在手写 XML 的 decreaseStockWithVersion 中手动实现。
      */
-    @Version
     private Integer version;
 
     /**
