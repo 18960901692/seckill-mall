@@ -124,15 +124,18 @@ public class SeckillServiceImpl implements SeckillService {
                     newOrder.setStatus(0);
                     ordersMapper.insert(newOrder);
 
-                    // 8. 发送延时消息
-                    orderDelayProducer.sendDelayMessage(orderNo);
-                    log.info("秒杀下单成功，订单号: {}, 商品ID: {}, 用户ID: {}", orderNo, productId, userId);
-
                     return newOrder;
                 });
                 
-                // 9. 事务提交后失效商品缓存（确保其他事务读到新数据）
+                // 事务提交后：失效商品缓存 + 发送延时消息
+                // 事务已提交，此时消息发送不会导致"事务回滚但消息已发出"的不一致
                 productService.invalidateCache(productId);
+                try {
+                    orderDelayProducer.sendDelayMessage(order.getOrderNo());
+                } catch (Exception e) {
+                    log.error("延时消息发送失败，订单号: {}，将由对账任务补偿", order.getOrderNo(), e);
+                }
+                log.info("秒杀下单成功，订单号: {}, 商品ID: {}, 用户ID: {}", order.getOrderNo(), productId, userId);
             } catch (BusinessException e) {
                 // MySQL 操作失败（乐观锁冲突等），回滚 Redis 预扣和防重标记
                 redisTemplate.opsForValue().increment(stockKey);

@@ -1,5 +1,6 @@
 package com.sygzcd.seckillmall.controller;
 
+import com.sygzcd.seckillmall.annotation.RequireAdmin;
 import com.sygzcd.seckillmall.common.Result;
 import com.sygzcd.seckillmall.service.BlackListService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -43,6 +44,7 @@ public class BlackListController {
 
     @Operation(summary = "手动加入黑名单")
     @PostMapping("/add")
+    @RequireAdmin
     public Result<Void> add(
             @RequestParam String type,
             @RequestParam String key) {
@@ -52,6 +54,7 @@ public class BlackListController {
 
     @Operation(summary = "移出黑名单")
     @DeleteMapping("/remove")
+    @RequireAdmin
     public Result<Void> remove(
             @RequestParam String type,
             @RequestParam String key) {

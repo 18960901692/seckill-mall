@@ -60,16 +60,16 @@ public class ProductServiceImpl implements ProductService {
         String lockKey = LOCK_KEY + id;
         RLock lock = redissonClient.getLock(lockKey);
 
-        try {
-            // 尝试获取锁，最多等待3秒，持有锁最多10秒
-            boolean locked = lock.tryLock(3, 10, TimeUnit.SECONDS);
-            if (!locked) {
-                // 获取锁失败，短暂休眠后重试从缓存读取
-                Thread.sleep(50);
-                return getById(id);
-            }
+        // 获取锁失败时直接查DB，避免 sleep+递归 的自旋等待
+        // 热点商品已在预热阶段加载到缓存，此分支主要处理普通商品首次访问
+        boolean locked = lock.tryLock();
+        if (!locked) {
+            // 其他线程正在从DB加载，直接查DB（短时高并发下可能少量穿透，可接受）
+            return productMapper.selectById(id);
+        }
 
-            // 获取锁成功，再次检查缓存（双重检查）
+        try {
+            // 再次检查缓存（双重检查）
             product = (Product) redisTemplate.opsForValue().get(key);
             if (product != null) {
                 caffeineCache.put(key, product);
@@ -91,8 +91,6 @@ public class ProductServiceImpl implements ProductService {
                 }
                 caffeineCache.put(key, product);
             }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
         } finally {
             // 释放锁
             if (lock.isHeldByCurrentThread()) {

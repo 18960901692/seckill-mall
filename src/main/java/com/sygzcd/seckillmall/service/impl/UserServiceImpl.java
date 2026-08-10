@@ -72,6 +72,11 @@ public class UserServiceImpl implements UserService {
         session.setAttribute("user", user);
         session.setAttribute("userId", user.getId());
 
+        // 管理员标志：用户名为 admin 的用户拥有管理员权限
+        if ("admin".equals(username)) {
+            session.setAttribute("isAdmin", true);
+        }
+
         // 防多地登录：将 userId → sessionId 存入 Redis，后续请求校验一致性
         stringRedisTemplate.opsForValue().set(
                 LOGIN_SESSION_KEY + user.getId(),

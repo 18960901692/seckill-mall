@@ -1,5 +1,6 @@
 package com.sygzcd.seckillmall.config;
 
+import com.sygzcd.seckillmall.interceptor.AdminInterceptor;
 import com.sygzcd.seckillmall.interceptor.AuthInterceptor;
 import com.sygzcd.seckillmall.interceptor.BlackListInterceptor;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -19,6 +20,9 @@ public class WebMvcConfig implements WebMvcConfigurer {
 
     @Autowired
     private BlackListInterceptor blackListInterceptor;
+
+    @Autowired
+    private AdminInterceptor adminInterceptor;
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
@@ -51,5 +55,11 @@ public class WebMvcConfig implements WebMvcConfigurer {
                         "/v3/api-docs/**"
                 )
                 .order(1);
+
+        // 管理员权限拦截器：在登录拦截器之后执行
+        // 仅拦截黑名单管理接口中的敏感操作（通过 @RequireAdmin 注解标记）
+        registry.addInterceptor(adminInterceptor)
+                .addPathPatterns("/api/blacklist/**")
+                .order(2);
     }
 }
