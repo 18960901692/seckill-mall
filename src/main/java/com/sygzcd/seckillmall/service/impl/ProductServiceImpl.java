@@ -10,6 +10,7 @@ import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.util.concurrent.ThreadLocalRandom;
@@ -24,6 +25,9 @@ public class ProductServiceImpl implements ProductService {
 
     @Autowired
     private RedisTemplate<String, Object> redisTemplate;
+
+    @Autowired
+    private StringRedisTemplate stringRedisTemplate;
 
     @Autowired
     private Cache<String, Object> caffeineCache;
@@ -166,8 +170,10 @@ public class ProductServiceImpl implements ProductService {
         caffeineCache.invalidate(stockKey);
 
         // 3. 广播通知其他实例清除本地 Caffeine
-        redisTemplate.convertAndSend(CacheInvalidateConfig.CACHE_INVALIDATE_CHANNEL, key);
-        redisTemplate.convertAndSend(CacheInvalidateConfig.CACHE_INVALIDATE_CHANNEL, stockKey);
+        // 使用 StringRedisTemplate 避免 Jackson 序列化给字符串加双引号，
+        // 否则监听器 new String(getBody()) 得到带引号的 key，匹配不上 Caffeine
+        stringRedisTemplate.convertAndSend(CacheInvalidateConfig.CACHE_INVALIDATE_CHANNEL, key);
+        stringRedisTemplate.convertAndSend(CacheInvalidateConfig.CACHE_INVALIDATE_CHANNEL, stockKey);
 
         log.debug("商品缓存已失效，商品ID: {}", id);
     }
