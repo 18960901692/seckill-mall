@@ -82,6 +82,7 @@ public class SeckillServiceImpl implements SeckillService {
         RLock lock = redissonClient.getLock(lockKey);
         String stockKey = STOCK_KEY + productId;
         boolean locked = false;
+        boolean decremented = false;
 
         try {
             locked = lock.tryLock(3, 10, TimeUnit.SECONDS);
@@ -92,6 +93,7 @@ public class SeckillServiceImpl implements SeckillService {
 
             // 5. Redis 预扣库存（原子操作）
             Long remainStock = redisTemplate.opsForValue().decrement(stockKey);
+            decremented = true;
             if (remainStock == null || remainStock < 0) {
                 redisTemplate.opsForValue().increment(stockKey);
                 redisTemplate.delete(userKey);
@@ -142,6 +144,10 @@ public class SeckillServiceImpl implements SeckillService {
 
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+            // 防御性补偿：如果 DECR 已执行，须回补 Redis 库存
+            if (decremented) {
+                redisTemplate.opsForValue().increment(stockKey);
+            }
             redisTemplate.delete(userKey);
             throw new BusinessException("系统繁忙");
         } catch (BusinessException e) {
