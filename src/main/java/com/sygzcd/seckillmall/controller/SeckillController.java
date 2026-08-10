@@ -8,7 +8,6 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
@@ -16,7 +15,6 @@ import org.springframework.web.bind.annotation.*;
  * 秒杀控制器
  * 提供秒杀下单接口
  */
-@Slf4j
 @RestController
 @RequestMapping("/api/seckill")
 @Tag(name = "秒杀接口", description = "秒杀下单相关接口")
@@ -45,12 +43,8 @@ public class SeckillController {
             return Result.fail(401, "未登录");
         }
 
-        try {
-            Orders order = seckillService.seckill(userId, productId);
-            return Result.success(order);
-        } catch (Exception e) {
-            log.error("秒杀失败，用户ID: {}, 商品ID: {}", userId, productId, e);
-            return Result.fail(500, e.getMessage());
-        }
+        // 异常交由 GlobalExceptionHandler 统一处理，保证业务异常码（1001/1003等）正确返回
+        Orders order = seckillService.seckill(userId, productId);
+        return Result.success(order);
     }
 }
