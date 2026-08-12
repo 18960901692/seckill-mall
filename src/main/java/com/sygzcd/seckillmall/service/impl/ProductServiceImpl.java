@@ -60,10 +60,25 @@ public class ProductServiceImpl implements ProductService {
         String lockKey = LOCK_KEY + id;
         RLock lock = redissonClient.getLock(lockKey);
 
-        // 获取锁失败时直接查DB，避免自旋等待
-        boolean locked = lock.tryLock();
+        // 尝试获取锁，等待 50ms
+        // leaseTime=0 表示由 Redisson 看门狗自动续期（默认30s，线程持有期间自动续期）
+        // 避免设置固定过期时间导致锁提前释放、被其他线程误持
+        boolean locked;
+        try {
+            locked = lock.tryLock(50, 0, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            // 线程被中断时直接查 DB 兜底
+            return productMapper.selectById(id);
+        }
         if (!locked) {
-            // 其他线程正在从DB加载，直接查DB（短时高并发下可能少量穿透，可接受）
+            // 等待超时仍未获取锁，说明数据可能已被其他线程加载到 Redis
+            product = (Product) redisTemplate.opsForValue().get(key);
+            if (product != null) {
+                caffeineCache.put(key, product);
+                return product;
+            }
+            // Redis 也未命中（极端情况），直接查 DB
             return productMapper.selectById(id);
         }
 
