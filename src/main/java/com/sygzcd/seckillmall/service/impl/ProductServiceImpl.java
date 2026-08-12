@@ -30,7 +30,7 @@ public class ProductServiceImpl implements ProductService {
     private StringRedisTemplate stringRedisTemplate;
 
     @Autowired
-    private Cache<String, Object> caffeineCache;
+    private Cache<String, Product> caffeineCache;
 
     @Autowired
     private RedissonClient redissonClient;
@@ -44,7 +44,7 @@ public class ProductServiceImpl implements ProductService {
         String key = PRODUCT_KEY + id;
 
         // 第一层：Caffeine 本地缓存
-        Product product = (Product) caffeineCache.getIfPresent(key);
+        Product product = caffeineCache.getIfPresent(key);
         if (product != null) {
             return product;
         }
@@ -60,8 +60,7 @@ public class ProductServiceImpl implements ProductService {
         String lockKey = LOCK_KEY + id;
         RLock lock = redissonClient.getLock(lockKey);
 
-        // 获取锁失败时直接查DB，避免 sleep+递归 的自旋等待
-        // 热点商品已在预热阶段加载到缓存，此分支主要处理普通商品首次访问
+        // 获取锁失败时直接查DB，避免自旋等待
         boolean locked = lock.tryLock();
         if (!locked) {
             // 其他线程正在从DB加载，直接查DB（短时高并发下可能少量穿透，可接受）
@@ -105,20 +104,13 @@ public class ProductServiceImpl implements ProductService {
     public Integer getStock(Long id) {
         String key = STOCK_KEY + id;
 
-        // 第一层：Caffeine
-        Integer stock = (Integer) caffeineCache.getIfPresent(key);
+        // 第一层：Redis（实时库存，秒杀一致性保证）
+        Integer stock = (Integer) redisTemplate.opsForValue().get(key);
         if (stock != null) {
             return stock;
         }
 
-        // 第二层：Redis
-        stock = (Integer) redisTemplate.opsForValue().get(key);
-        if (stock != null) {
-            caffeineCache.put(key, stock);
-            return stock;
-        }
-
-        // 第三层：MySQL
+        // 第二层：MySQL（Redis 未初始化时回填，返回后后续请求走 Redis）
         Product product = productMapper.selectById(id);
         if (product != null) {
             stock = product.getStock();
@@ -126,7 +118,6 @@ public class ProductServiceImpl implements ProductService {
             long baseTtl = 30 * 60;
             long randomTtl = ThreadLocalRandom.current().nextLong(0, 5 * 60);
             redisTemplate.opsForValue().set(key, stock, baseTtl + randomTtl, TimeUnit.SECONDS);
-            caffeineCache.put(key, stock);
             return stock;
         }
 
@@ -140,38 +131,36 @@ public class ProductServiceImpl implements ProductService {
             String key = PRODUCT_KEY + id;
             String stockKey = STOCK_KEY + id;
 
-            // 预热到Redis
+            // 商品信息和库存都预热到 Redis
             redisTemplate.opsForValue().set(key, product);
             redisTemplate.opsForValue().set(stockKey, product.getStock());
 
-            // 预热到Caffeine
+            // 仅商品信息预热到 Caffeine（库存不进本地缓存）
             caffeineCache.put(key, product);
-            caffeineCache.put(stockKey, product.getStock());
         }
     }
 
     /**
      * 失效商品缓存
      * 清除 Redis product:{id} + 失效 Caffeine 本地缓存 + 广播通知其他实例
+     * 库存仅存在 Redis，失效时直接删除即可，不经过 Caffeine
      */
     @Override
     public void invalidateCache(Long id) {
         String key = PRODUCT_KEY + id;
         String stockKey = STOCK_KEY + id;
 
-        // 1. 清除 Redis 缓存
+        // 1. 清除 Redis 缓存（商品信息 + 库存）
         redisTemplate.delete(key);
         redisTemplate.delete(stockKey);
 
-        // 2. 失效本地 Caffeine 缓存
+        // 2. 失效本地 Caffeine 缓存（仅商品信息）
         caffeineCache.invalidate(key);
-        caffeineCache.invalidate(stockKey);
 
         // 3. 广播通知其他实例清除本地 Caffeine
         // 使用 StringRedisTemplate 避免 Jackson 序列化给字符串加双引号，
         // 否则监听器 new String(getBody()) 得到带引号的 key，匹配不上 Caffeine
         stringRedisTemplate.convertAndSend(CacheInvalidateConfig.CACHE_INVALIDATE_CHANNEL, key);
-        stringRedisTemplate.convertAndSend(CacheInvalidateConfig.CACHE_INVALIDATE_CHANNEL, stockKey);
 
         log.debug("商品缓存已失效，商品ID: {}", id);
     }

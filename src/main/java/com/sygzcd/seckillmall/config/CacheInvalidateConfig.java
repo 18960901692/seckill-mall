@@ -1,7 +1,7 @@
 package com.sygzcd.seckillmall.config;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.benmanes.caffeine.cache.Cache;
+import com.sygzcd.seckillmall.entity.Product;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
@@ -15,7 +15,7 @@ import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 /**
  * 缓存失效广播配置
  * 通过 Redis Pub/Sub 实现多实例 Caffeine 缓存一致性
- * 当某实例更新缓存时，发布失效消息，其他实例收到后清除本地 Caffeine
+ * 当某实例更新商品缓存时，发布失效消息，其他实例收到后清除本地 Caffeine
  */
 @Slf4j
 @Configuration
@@ -24,7 +24,7 @@ public class CacheInvalidateConfig {
     public static final String CACHE_INVALIDATE_CHANNEL = "cache:invalidate";
 
     @Autowired
-    private Cache<String, Object> caffeineCache;
+    private Cache<String, Product> caffeineCache;
 
     /**
      * Redis 消息监听容器
@@ -35,7 +35,7 @@ public class CacheInvalidateConfig {
             RedisConnectionFactory connectionFactory) {
         RedisMessageListenerContainer container = new RedisMessageListenerContainer();
         container.setConnectionFactory(connectionFactory);
-        container.addMessageListener(new CacheInvalidateListener(), 
+        container.addMessageListener(new CacheInvalidateListener(),
                 new ChannelTopic(CACHE_INVALIDATE_CHANNEL));
         return container;
     }

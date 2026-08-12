@@ -2,6 +2,7 @@ package com.sygzcd.seckillmall.config;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
+import com.sygzcd.seckillmall.entity.Product;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -9,13 +10,13 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * Caffeine 本地缓存配置
- * 三级缓存：Caffeine → Redis → MySQL
+ * 仅缓存商品基本信息（Product），库存直接以 Redis 为准
  */
 @Configuration
 public class CaffeineConfig {
 
     @Bean
-    public Cache<String, Object> caffeineCache() {
+    public Cache<String, Product> caffeineCache() {
         return Caffeine.newBuilder()
                 // 最大缓存条目数
                 .maximumSize(1000)
