@@ -1,6 +1,8 @@
 package com.sygzcd.seckillmall.controller;
 
+import com.sygzcd.seckillmall.common.BusinessException;
 import com.sygzcd.seckillmall.common.Result;
+import com.sygzcd.seckillmall.common.ResultCode;
 import com.sygzcd.seckillmall.entity.Product;
 import com.sygzcd.seckillmall.service.ProductService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -20,6 +22,9 @@ public class ProductController {
     @GetMapping("/{id}")
     public Result<Product> getById(@PathVariable Long id) {
         Product product = productService.getById(id);
+        if (product == null) {
+            throw new BusinessException(ResultCode.NOT_FOUND);
+        }
         return Result.success(product);
     }
 
