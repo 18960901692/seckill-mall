@@ -24,4 +24,11 @@ public interface OrdersMapper extends BaseMapper<Orders> {
      * WHERE status=0 保证支付与取消竞争时只有一个成功
      */
     int cancelOrderById(@Param("id") Long id);
+
+    /**
+     * 查询用户对某商品的有效订单（未支付或已支付）
+     * 用于 Redis 防重 key 过期/故障后的 DB 兜底检查
+     * 只查 status IN (0,1) 的订单，已取消（status=2）的不算
+     */
+    Orders selectValidOrder(@Param("userId") Long userId, @Param("productId") Long productId);
 }

@@ -23,4 +23,15 @@
           AND status = 0
     </update>
 
+    <!-- 查询用户对某商品的有效订单（未支付或已支付） -->
+    <!-- 用于 Redis 防重 key 过期/故障后的 DB 兜底检查 -->
+    <!-- 只查 status IN (0,1)，已取消（status=2）的不算，允许取消后重购 -->
+    <select id="selectValidOrder" resultType="com.sygzcd.seckillmall.entity.Orders">
+        SELECT * FROM orders
+        WHERE user_id = #{userId}
+          AND product_id = #{productId}
+          AND status IN (0, 1)
+        LIMIT 1
+    </select>
+
 </mapper>

@@ -38,6 +38,10 @@ CREATE TABLE IF NOT EXISTS orders (
 ALTER TABLE orders ADD UNIQUE KEY uk_order_no (order_no);
 ALTER TABLE orders ADD UNIQUE KEY uk_transaction_id (transaction_id);
 
+-- 用户+商品+状态复合索引，提升防重查询效率
+-- 用于秒杀防重的 DB 兜底：SELECT ... WHERE user_id=? AND product_id=? AND status IN (0,1)
+ALTER TABLE orders ADD INDEX idx_user_product_status (user_id, product_id, status);
+
 -- 用户表（分布式 Session 关联，密码 BCrypt 加密存储）
 CREATE TABLE IF NOT EXISTS user (
     id          BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '用户ID',

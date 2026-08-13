@@ -15,6 +15,7 @@ import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -24,7 +25,7 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * 秒杀服务实现
- * 完整链路：布隆过滤器 → 用户防重 → 三级缓存查库存 → 分布式锁 → Redis预扣 → MySQL乐观锁 → 延时消息
+ * 完整链路：布隆过滤器 → 用户防重(Redis SETNX + DB兜底) → 三级缓存查库存 → 分布式锁 → Redis预扣 → MySQL乐观锁 → 延时消息
  */
 @Slf4j
 @Service
@@ -46,6 +47,9 @@ public class SeckillServiceImpl implements SeckillService {
     private RedisTemplate<String, Object> redisTemplate;
 
     @Autowired
+    private StringRedisTemplate stringRedisTemplate;
+
+    @Autowired
     private RedissonClient redissonClient;
 
     @Autowired
@@ -65,17 +69,27 @@ public class SeckillServiceImpl implements SeckillService {
             throw new BusinessException("商品不存在");
         }
 
-        // 2. 用户防重检查（同一用户同一商品只能抢一次）
+        // 2. 用户防重检查（双重保障）
+        // 2.1 Redis SETNX：高性能快速拦截，99% 的重复请求在此被挡住
         String userKey = USER_SECKILL_KEY + productId + ":" + userId;
-        Boolean added = redisTemplate.opsForValue().setIfAbsent(userKey, "1", 1, TimeUnit.HOURS);
+        Boolean added = stringRedisTemplate.opsForValue()
+                .setIfAbsent(userKey, "1", 1, TimeUnit.HOURS);
         if (added == null || !added) {
             throw new BusinessException("你已经抢过了，请勿重复操作");
+        }
+
+        // 2.2 DB 兜底检查：防止 Redis TTL 过期或故障导致的重复下单
+        // 只查 status IN (0,1) 的有效订单，已取消（status=2）的允许重购
+        Orders existing = ordersMapper.selectValidOrder(userId, productId);
+        if (existing != null) {
+            stringRedisTemplate.delete(userKey);
+            throw new BusinessException("你已经有该商品的订单，请勿重复下单");
         }
 
         // 3. 三级缓存查库存（快速失败）
         Integer stock = productService.getStock(productId);
         if (stock == null || stock <= 0) {
-            redisTemplate.delete(userKey);
+            stringRedisTemplate.delete(userKey);
             throw new BusinessException("商品已售罄");
         }
 
@@ -89,7 +103,7 @@ public class SeckillServiceImpl implements SeckillService {
         try {
             locked = lock.tryLock(3, 10, TimeUnit.SECONDS);
             if (!locked) {
-                redisTemplate.delete(userKey);
+                stringRedisTemplate.delete(userKey);
                 throw new BusinessException("系统繁忙，请稍后重试");
             }
 
@@ -98,7 +112,7 @@ public class SeckillServiceImpl implements SeckillService {
             decremented = true;
             if (remainStock == null || remainStock < 0) {
                 redisTemplate.opsForValue().increment(stockKey);
-                redisTemplate.delete(userKey);
+                stringRedisTemplate.delete(userKey);
                 throw new BusinessException("商品已售罄");
             }
 
@@ -116,7 +130,7 @@ public class SeckillServiceImpl implements SeckillService {
                         throw new BusinessException("手慢了，商品已售罄");
                     }
 
-                    // 7. 创建订单（Redis防重key 兜底幂等，保证同一用户同一商品只能下一单）
+                    // 7. 创建订单（Redis防重key + DB状态检查 双重保障幂等）
                     //    金额采用快照设计：下单时从商品表复制价格到订单表，避免商品调价影响历史订单
                     String orderNo = UUID.randomUUID().toString().replace("-", "").substring(0, 32);
                     Orders newOrder = new Orders();
@@ -144,7 +158,7 @@ public class SeckillServiceImpl implements SeckillService {
             } catch (BusinessException e) {
                 // MySQL 操作失败（乐观锁冲突等），回滚 Redis 预扣和防重标记
                 redisTemplate.opsForValue().increment(stockKey);
-                redisTemplate.delete(userKey);
+                stringRedisTemplate.delete(userKey);
                 throw e;
             }
 
@@ -156,14 +170,14 @@ public class SeckillServiceImpl implements SeckillService {
             if (decremented) {
                 redisTemplate.opsForValue().increment(stockKey);
             }
-            redisTemplate.delete(userKey);
+            stringRedisTemplate.delete(userKey);
             throw new BusinessException("系统繁忙");
         } catch (BusinessException e) {
             throw e;
         } catch (Exception e) {
             log.error("秒杀下单异常，用户ID: {}, 商品ID: {}", userId, productId, e);
             redisTemplate.opsForValue().increment(stockKey); // 回滚 Redis 预扣库存
-            redisTemplate.delete(userKey);
+            stringRedisTemplate.delete(userKey);
             // 唯一索引冲突兜底：order_no唯一索引冲突（UUID碰撞概率极低，主要靠Redis防重key）
             if (e instanceof org.springframework.dao.DuplicateKeyException) {
                 throw new BusinessException(ResultCode.REPEAT_ORDER);
