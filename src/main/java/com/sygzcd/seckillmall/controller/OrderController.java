@@ -1,6 +1,7 @@
 package com.sygzcd.seckillmall.controller;
 
 import com.sygzcd.seckillmall.common.BusinessException;
+import com.sygzcd.seckillmall.common.PayResultDTO;
 import com.sygzcd.seckillmall.common.Result;
 import com.sygzcd.seckillmall.common.ResultCode;
 import com.sygzcd.seckillmall.entity.Orders;
@@ -73,6 +74,25 @@ public class OrderController {
         }
         orderService.cancelOrder(orderNo);
         return Result.success(null);
+    }
+
+    /**
+     * 支付订单
+     * 模拟支付，将未支付订单变更为已支付状态
+     * 数据库条件更新 WHERE status=0 保证支付幂等
+     * @param orderNo 订单号
+     * @param request HTTP请求（获取当前用户ID做归属校验）
+     * @return 支付结果（含订单号、状态、支付时间）
+     */
+    @PostMapping("/{orderNo}/pay")
+    @Operation(summary = "支付订单", description = "模拟支付，将未支付订单变更为已支付状态")
+    public Result<PayResultDTO> payOrder(
+            @Parameter(description = "订单号", required = true)
+            @PathVariable String orderNo,
+            HttpServletRequest request) {
+        Long userId = (Long) request.getSession().getAttribute("userId");
+        PayResultDTO result = orderService.payOrder(orderNo, userId);
+        return Result.success(result);
     }
 
     /**

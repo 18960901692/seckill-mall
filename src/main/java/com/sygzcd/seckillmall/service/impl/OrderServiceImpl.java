@@ -3,6 +3,9 @@ package com.sygzcd.seckillmall.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.sygzcd.seckillmall.common.BusinessException;
+import com.sygzcd.seckillmall.common.PayResultDTO;
+import com.sygzcd.seckillmall.common.ResultCode;
 import com.sygzcd.seckillmall.entity.Orders;
 import com.sygzcd.seckillmall.entity.Product;
 import com.sygzcd.seckillmall.mapper.OrdersMapper;
@@ -15,11 +18,13 @@ import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * 订单服务实现
- * 职责：订单查询、取消订单（释放库存）
+ * 职责：订单查询、订单取消（状态流转+释放库存）、订单支付（状态流转）
  */
 @Slf4j
 @Service
@@ -51,8 +56,8 @@ public class OrderServiceImpl implements OrderService {
     }
 
     /**
-     * 取消订单（编程式事务，确保 Redis 操作和缓存失效在事务提交后执行）
-     * 1. 事务内：物理删除订单 + 回滚 MySQL 库存
+     * 取消订单（订单状态流转 + 释放库存）
+     * 1. 事务内：取消订单状态流转（UPDATE status=2 WHERE status=0）+ 回滚 MySQL 库存
      * 2. 事务外：回滚 Redis 库存 + 失效商品缓存 + 删除用户抢购记录
      */
     @Override
@@ -64,33 +69,30 @@ public class OrderServiceImpl implements OrderService {
 
         Long productId = order.getProductId();
         Long userId = order.getUserId();
-        boolean[] deleted = {false};
+        boolean[] cancelled = {false};
 
         // 编程式事务：只包含 DB 操作，事务提交后才执行 Redis/缓存操作
         transactionTemplate.execute(status -> {
-            // 物理删除订单（配合唯一索引 uk_user_product，允许用户取消后重新抢购）
-            // 并发场景：MQ死信消息与手动取消同时触发时，先执行的事务删除成功并回滚库存，
-            // 后执行的事务 deleteById 返回 0，必须直接返回，避免库存被回滚两次
-            int d = ordersMapper.deleteById(order.getId());
+            // 订单取消状态流转：条件更新 WHERE status=0 保证支付与取消竞争时只有一个成功
+            int d = ordersMapper.cancelOrderById(order.getId());
             if (d == 0) {
-                log.info("订单已被其他请求取消，跳过库存回滚，订单号: {}", orderNo);
+                log.info("订单已被其他请求处理（支付或取消），跳过，订单号: {}", orderNo);
                 return null;
             }
 
             // 回滚 MySQL 库存（原子操作）+ 同步递增版本号
-            // 保持 version 与库存更新次数一致，避免后续秒杀乐观锁因版本号滞后而误杀
             productMapper.update(null,
                     new UpdateWrapper<Product>()
                             .eq("id", productId)
                             .setSql("stock = stock + 1, version = version + 1")
             );
 
-            deleted[0] = true;
+            cancelled[0] = true;
             return null;
         });
 
         // 事务提交后执行以下操作（若事务回滚则不会执行）
-        if (deleted[0]) {
+        if (cancelled[0]) {
             // 回滚 Redis 库存
             String stockKey = STOCK_KEY + productId;
             redisTemplate.opsForValue().increment(stockKey);
@@ -102,8 +104,52 @@ public class OrderServiceImpl implements OrderService {
             String userKey = USER_SECKILL_KEY + productId + ":" + userId;
             redisTemplate.delete(userKey);
 
-            log.info("订单取消成功（物理删除），订单号: {}, 商品ID: {}, 用户ID: {}", orderNo, productId, userId);
+            log.info("订单取消成功（状态流转），订单号: {}, 商品ID: {}, 用户ID: {}", orderNo, productId, userId);
         }
+    }
+
+    /**
+     * 支付订单（订单状态流转：status=0 → status=1）
+     * 数据库条件更新 WHERE status=0 保证支付幂等：
+     * - 重复支付只有一次成功
+     * - 与超时取消竞争时，只有一个状态流转成功
+     */
+    @Override
+    public PayResultDTO payOrder(String orderNo, Long userId) {
+        // 1. 查询订单
+        Orders order = getByOrderNo(orderNo);
+        if (order == null) {
+            throw new BusinessException(ResultCode.NOT_FOUND);
+        }
+
+        // 2. 用户归属校验（防止支付他人订单）
+        if (!order.getUserId().equals(userId)) {
+            throw new BusinessException(ResultCode.FORBIDDEN);
+        }
+
+        // 3. 状态校验（给用户友好的错误提示）
+        if (order.getStatus() != 0) {
+            throw new BusinessException("订单已支付或已取消");
+        }
+
+        // 4. 生成支付流水号（UUID 保证全局唯一）
+        String transactionId = UUID.randomUUID().toString().replace("-", "");
+
+        // 5. 数据库条件更新实现支付幂等
+        //    两个并发支付请求只有一个能更新成功
+        int affected = ordersMapper.payOrder(orderNo, userId, transactionId);
+        if (affected == 0) {
+            throw new BusinessException("订单状态已变更，请刷新重试");
+        }
+
+        // 6. 返回支付结果
+        PayResultDTO result = new PayResultDTO();
+        result.setOrderNo(orderNo);
+        result.setStatus(1);
+        result.setPayTime(LocalDateTime.now());
+
+        log.info("订单支付成功，订单号: {}, 用户ID: {}, 流水号: {}", orderNo, userId, transactionId);
+        return result;
     }
 
     @Override

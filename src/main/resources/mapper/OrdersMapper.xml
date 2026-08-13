@@ -2,4 +2,25 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.sygzcd.seckillmall.mapper.OrdersMapper">
 
+    <!-- 支付订单：条件更新实现支付幂等 -->
+    <!-- WHERE status=0 保证重复支付只有一次成功 -->
+    <update id="payOrder">
+        UPDATE orders
+        SET status = 1,
+            pay_time = NOW(),
+            transaction_id = #{transactionId}
+        WHERE order_no = #{orderNo}
+          AND user_id = #{userId}
+          AND status = 0
+    </update>
+
+    <!-- 订单取消状态流转：条件更新实现并发控制 -->
+    <!-- WHERE status=0 保证支付与取消竞争时只有一个成功 -->
+    <update id="cancelOrderById">
+        UPDATE orders
+        SET status = 2
+        WHERE id = #{id}
+          AND status = 0
+    </update>
+
 </mapper>

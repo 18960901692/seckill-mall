@@ -18,6 +18,7 @@ import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.math.BigDecimal;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
@@ -115,13 +116,14 @@ public class SeckillServiceImpl implements SeckillService {
                         throw new BusinessException("手慢了，商品已售罄");
                     }
 
-                    // 7. 创建订单（DB唯一索引 uk_user_product 兜底幂等，
-                    //    防 Redis 防重 key 过期/故障后的重复下单）
+                    // 7. 创建订单（Redis防重key 兜底幂等，保证同一用户同一商品只能下一单）
+                    //    金额采用快照设计：下单时从商品表复制价格到订单表，避免商品调价影响历史订单
                     String orderNo = UUID.randomUUID().toString().replace("-", "").substring(0, 32);
                     Orders newOrder = new Orders();
                     newOrder.setOrderNo(orderNo);
                     newOrder.setUserId(userId);
                     newOrder.setProductId(productId);
+                    newOrder.setAmount(product.getPrice()); // 订单快照：锁定下单时的商品价格
                     newOrder.setStatus(0);
                     ordersMapper.insert(newOrder);
 
@@ -162,7 +164,7 @@ public class SeckillServiceImpl implements SeckillService {
             log.error("秒杀下单异常，用户ID: {}, 商品ID: {}", userId, productId, e);
             redisTemplate.opsForValue().increment(stockKey); // 回滚 Redis 预扣库存
             redisTemplate.delete(userKey);
-            // 唯一索引冲突：Redis 防重 key 过期后，DB 兜底捕获重复下单
+            // 唯一索引冲突兜底：order_no唯一索引冲突（UUID碰撞概率极低，主要靠Redis防重key）
             if (e instanceof org.springframework.dao.DuplicateKeyException) {
                 throw new BusinessException(ResultCode.REPEAT_ORDER);
             }
