@@ -166,15 +166,15 @@ public class ProductServiceImpl implements ProductService {
         String stockKey = STOCK_KEY + id;
 
         // 1. 清除 Redis 缓存（商品信息 + 库存）
-        redisTemplate.delete(key);
-        redisTemplate.delete(stockKey);
+        //    使用 StringRedisTemplate 避免 Jackson 序列化给 key 加双引号
+        stringRedisTemplate.delete(key);
+        stringRedisTemplate.delete(stockKey);
 
         // 2. 失效本地 Caffeine 缓存（仅商品信息）
         caffeineCache.invalidate(key);
 
         // 3. 广播通知其他实例清除本地 Caffeine
-        // 使用 StringRedisTemplate 避免 Jackson 序列化给字符串加双引号，
-        // 否则监听器 new String(getBody()) 得到带引号的 key，匹配不上 Caffeine
+        //    统一使用 StringRedisTemplate，与监听端 new String(getBody()) 匹配
         stringRedisTemplate.convertAndSend(CacheInvalidateConfig.CACHE_INVALIDATE_CHANNEL, key);
 
         log.debug("商品缓存已失效，商品ID: {}", id);
