@@ -1,7 +1,7 @@
 package com.sygzcd.seckillmall.service.impl;
 
 import com.sygzcd.seckillmall.common.BusinessException;
-import com.sygzcd.seckillmall.common.ResultCode;
+import com.sygzcd.seckillmall.common.UserDTO;
 import com.sygzcd.seckillmall.entity.User;
 import com.sygzcd.seckillmall.mapper.UserMapper;
 import com.sygzcd.seckillmall.service.UserService;
@@ -30,20 +30,19 @@ public class UserServiceImpl implements UserService {
     @Autowired
     private StringRedisTemplate stringRedisTemplate;
 
+    @Autowired
+    private UserCacheService userCacheService;
+
     private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
 
     @Override
     public void register(String username, String password) {
-        // 检查用户名是否已存在
         User existingUser = userMapper.selectByUsername(username);
         if (existingUser != null) {
             throw new BusinessException("用户名已存在");
         }
 
-        // 密码加密
         String encodedPassword = passwordEncoder.encode(password);
-        
-        // 创建用户
         User user = new User();
         user.setUsername(username);
         user.setPassword(encodedPassword);
@@ -51,25 +50,22 @@ public class UserServiceImpl implements UserService {
         try {
             userMapper.insert(user);
         } catch (DuplicateKeyException e) {
-            // 并发场景下两个请求同时通过查重检查，MySQL 唯一索引 uk_username 兜底
             throw new BusinessException("用户名已存在");
         }
     }
 
     @Override
-    public User login(String username, String password) {
+    public UserDTO login(String username, String password) {
         User user = userMapper.selectByUsername(username);
         if (user == null) {
             throw new BusinessException("用户名或密码错误");
         }
 
-        // 验证密码
         if (!passwordEncoder.matches(password, user.getPassword())) {
             throw new BusinessException("用户名或密码错误");
         }
 
-        // 登录成功，写入 Session（存 userId 供业务层使用）
-        session.setAttribute("user", user);
+        // 登录成功，写入 Session（仅存 userId，避免保存密码 Hash 等敏感信息）
         session.setAttribute("userId", user.getId());
 
         // 管理员标志：用户名为 admin 的用户拥有管理员权限
@@ -84,22 +80,35 @@ public class UserServiceImpl implements UserService {
                 24, TimeUnit.HOURS
         );
 
-        return user;
+        // 写入三级缓存，后续查询直接走缓存
+        userCacheService.putUser(user);
+
+        return convertToDTO(user);
     }
 
     @Override
-    public User getCurrentUser() {
+    public UserDTO getById(Long id) {
+        return userCacheService.getById(id);
+    }
+
+    @Override
+    public UserDTO getCurrentUser() {
         ServletRequestAttributes attributes = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
         if (attributes == null) {
             return null;
         }
-        
+
         HttpSession session = attributes.getRequest().getSession(false);
         if (session == null) {
             return null;
         }
-        
-        return (User) session.getAttribute("user");
+
+        Long userId = (Long) session.getAttribute("userId");
+        if (userId == null) {
+            return null;
+        }
+
+        return userCacheService.getById(userId);
     }
 
     @Override
@@ -108,13 +117,16 @@ public class UserServiceImpl implements UserService {
         if (attributes != null) {
             HttpSession session = attributes.getRequest().getSession(false);
             if (session != null) {
-                // 清除 Redis 中的登录映射
-                User user = (User) session.getAttribute("user");
-                if (user != null) {
-                    stringRedisTemplate.delete(LOGIN_SESSION_KEY + user.getId());
+                Long userId = (Long) session.getAttribute("userId");
+                if (userId != null) {
+                    stringRedisTemplate.delete(LOGIN_SESSION_KEY + userId);
                 }
                 session.invalidate();
             }
         }
+    }
+
+    private UserDTO convertToDTO(User user) {
+        return new UserDTO(user.getId(), user.getUsername(), user.getCreateTime());
     }
 }

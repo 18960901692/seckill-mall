@@ -1,7 +1,6 @@
 package com.sygzcd.seckillmall.interceptor;
 
 import com.sygzcd.seckillmall.common.Result;
-import com.sygzcd.seckillmall.entity.User;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -10,8 +9,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
-
-import java.util.concurrent.TimeUnit;
 
 /**
  * 登录拦截器
@@ -32,7 +29,7 @@ public class AuthInterceptor implements HandlerInterceptor {
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
         HttpSession session = request.getSession(false);
         
-        if (session == null || session.getAttribute("user") == null) {
+        if (session == null || session.getAttribute("userId") == null) {
             response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
             response.setContentType("application/json;charset=UTF-8");
             response.getWriter().write(objectMapper.writeValueAsString(
@@ -42,8 +39,8 @@ public class AuthInterceptor implements HandlerInterceptor {
         }
 
         // 防多地登录：校验当前 sessionId 是否与 Redis 中存储的一致
-        User user = (User) session.getAttribute("user");
-        String redisKey = LOGIN_SESSION_KEY + user.getId();
+        Long userId = (Long) session.getAttribute("userId");
+        String redisKey = LOGIN_SESSION_KEY + userId;
         String storedSessionId = stringRedisTemplate.opsForValue().get(redisKey);
 
         if (storedSessionId == null) {

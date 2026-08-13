@@ -1,7 +1,7 @@
 package com.sygzcd.seckillmall.controller;
 
 import com.sygzcd.seckillmall.common.Result;
-import com.sygzcd.seckillmall.entity.User;
+import com.sygzcd.seckillmall.common.UserDTO;
 import com.sygzcd.seckillmall.service.UserService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -25,20 +25,15 @@ public class UserController {
 
     @Operation(summary = "用户登录")
     @PostMapping("/login")
-    public Result<User> login(@RequestParam String username, @RequestParam String password) {
-        User user = userService.login(username, password);
-        // 密码脱敏，不返回给前端
-        user.setPassword(null);
+    public Result<UserDTO> login(@RequestParam String username, @RequestParam String password) {
+        UserDTO user = userService.login(username, password);
         return Result.success(user);
     }
 
     @Operation(summary = "获取当前用户")
     @GetMapping("/current")
-    public Result<User> getCurrentUser() {
-        User user = userService.getCurrentUser();
-        if (user != null) {
-            user.setPassword(null);
-        }
+    public Result<UserDTO> getCurrentUser() {
+        UserDTO user = userService.getCurrentUser();
         return Result.success(user);
     }
 

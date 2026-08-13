@@ -1,7 +1,7 @@
 package com.sygzcd.seckillmall.controller;
 
 import com.sygzcd.seckillmall.common.Result;
-import com.sygzcd.seckillmall.entity.User;
+import com.sygzcd.seckillmall.common.UserDTO;
 import com.sygzcd.seckillmall.service.AnswerAsyncService;
 import com.sygzcd.seckillmall.service.UserService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -25,7 +25,7 @@ public class AnswerController {
     public Result<Void> submitAnswer(
             @RequestParam Long questionId,
             @RequestParam boolean correct) {
-        User user = userService.getCurrentUser();
+        UserDTO user = userService.getCurrentUser();
         if (user == null) {
             return Result.fail(401, "未登录");
         }

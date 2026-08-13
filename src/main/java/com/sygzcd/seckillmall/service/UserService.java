@@ -1,24 +1,29 @@
 package com.sygzcd.seckillmall.service;
 
-import com.sygzcd.seckillmall.entity.User;
+import com.sygzcd.seckillmall.common.UserDTO;
 
 public interface UserService {
-    
+
     /**
      * 用户注册
      */
     void register(String username, String password);
-    
+
     /**
-     * 用户登录
+     * 用户登录，返回脱敏用户信息
      */
-    User login(String username, String password);
-    
+    UserDTO login(String username, String password);
+
     /**
-     * 获取当前登录用户
+     * 根据ID查询用户（返回脱敏 DTO）
      */
-    User getCurrentUser();
-    
+    UserDTO getById(Long id);
+
+    /**
+     * 获取当前登录用户（返回脱敏 DTO）
+     */
+    UserDTO getCurrentUser();
+
     /**
      * 退出登录
      */
