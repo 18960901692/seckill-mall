@@ -77,11 +77,12 @@ public class OrderServiceImpl implements OrderService {
                 return null;
             }
 
-            // 回滚 MySQL 库存（原子操作）
+            // 回滚 MySQL 库存（原子操作）+ 同步递增版本号
+            // 保持 version 与库存更新次数一致，避免后续秒杀乐观锁因版本号滞后而误杀
             productMapper.update(null,
                     new UpdateWrapper<Product>()
                             .eq("id", productId)
-                            .setSql("stock = stock + 1")
+                            .setSql("stock = stock + 1, version = version + 1")
             );
 
             deleted[0] = true;
