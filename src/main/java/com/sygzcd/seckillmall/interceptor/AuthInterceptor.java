@@ -47,8 +47,14 @@ public class AuthInterceptor implements HandlerInterceptor {
         String storedSessionId = stringRedisTemplate.opsForValue().get(redisKey);
 
         if (storedSessionId == null) {
-            // Redis 中的映射已过期（24小时），重新设置当前 Session
-            stringRedisTemplate.opsForValue().set(redisKey, session.getId(), 24, TimeUnit.HOURS);
+            // Redis 中的映射已过期（24小时未操作），要求重新登录
+            session.invalidate();
+            response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+            response.setContentType("application/json;charset=UTF-8");
+            response.getWriter().write(objectMapper.writeValueAsString(
+                Result.fail(401, "登录已过期，请重新登录")
+            ));
+            return false;
         } else if (!storedSessionId.equals(session.getId())) {
             // sessionId 不一致，说明账号在其他设备登录，踢下线当前 Session
             session.invalidate();
