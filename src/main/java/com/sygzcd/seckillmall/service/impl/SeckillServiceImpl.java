@@ -1,6 +1,7 @@
 package com.sygzcd.seckillmall.service.impl;
 
 import com.sygzcd.seckillmall.common.BusinessException;
+import com.sygzcd.seckillmall.common.ResultCode;
 import com.sygzcd.seckillmall.entity.Orders;
 import com.sygzcd.seckillmall.entity.Product;
 import com.sygzcd.seckillmall.mapper.OrdersMapper;
@@ -161,6 +162,10 @@ public class SeckillServiceImpl implements SeckillService {
             log.error("秒杀下单异常，用户ID: {}, 商品ID: {}", userId, productId, e);
             redisTemplate.opsForValue().increment(stockKey); // 回滚 Redis 预扣库存
             redisTemplate.delete(userKey);
+            // 唯一索引冲突：Redis 防重 key 过期后，DB 兜底捕获重复下单
+            if (e instanceof org.springframework.dao.DuplicateKeyException) {
+                throw new BusinessException(ResultCode.REPEAT_ORDER);
+            }
             throw new BusinessException("秒杀失败，请稍后重试");
         } finally {
             if (locked) {
