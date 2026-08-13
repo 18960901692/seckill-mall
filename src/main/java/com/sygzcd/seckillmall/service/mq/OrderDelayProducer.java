@@ -20,18 +20,14 @@ public class OrderDelayProducer {
     /**
      * 发送延时消息（订单超时自动取消）
      * @param orderNo 订单号
+     * @throws Exception 发送失败时抛出，由调用方决定补偿策略
      */
     public void sendDelayMessage(String orderNo) {
-        try {
-            rabbitTemplate.convertAndSend(
-                    RabbitMQConfig.ORDER_DELAY_EXCHANGE,
-                    RabbitMQConfig.ORDER_DELAY_ROUTING_KEY,
-                    orderNo
-            );
-            log.info("延时消息发送成功，订单号: {}", orderNo);
-        } catch (Exception e) {
-            log.error("延时消息发送失败，订单号: {}", orderNo, e);
-            // 发送失败不影响下单，可记录补偿日志后续重试
-        }
+        rabbitTemplate.convertAndSend(
+                RabbitMQConfig.ORDER_DELAY_EXCHANGE,
+                RabbitMQConfig.ORDER_DELAY_ROUTING_KEY,
+                orderNo
+        );
+        log.info("延时消息发送成功，订单号: {}", orderNo);
     }
 }
