@@ -42,6 +42,9 @@ ALTER TABLE orders ADD UNIQUE KEY uk_transaction_id (transaction_id);
 -- 用于秒杀防重的 DB 兜底：SELECT ... WHERE user_id=? AND product_id=? AND status IN (0,1)
 ALTER TABLE orders ADD INDEX idx_user_product_status (user_id, product_id, status);
 
+-- 答题记录表幂等索引（重复执行会因索引已存在而报错，可忽略）
+ALTER TABLE answer_record ADD UNIQUE KEY uk_user_question (user_id, question_id);
+
 -- 用户表（分布式 Session 关联，密码 BCrypt 加密存储）
 CREATE TABLE IF NOT EXISTS user (
     id          BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '用户ID',
@@ -52,12 +55,14 @@ CREATE TABLE IF NOT EXISTS user (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户表';
 
 -- 答题记录表（Redis List 异步落库目标）
+-- (user_id, question_id) 唯一索引用于消费幂等，防止 RPOPLPUSH 重复消费
 CREATE TABLE IF NOT EXISTS answer_record (
     id          BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '记录ID',
     user_id     BIGINT NOT NULL COMMENT '用户ID',
     question_id BIGINT NOT NULL COMMENT '题目ID',
     correct     TINYINT NOT NULL COMMENT '是否正确: 0错误 1正确',
     create_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    UNIQUE KEY uk_user_question (user_id, question_id),
     KEY idx_user_ct (user_id, create_time)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='答题记录表';
 
