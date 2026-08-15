@@ -41,3 +41,7 @@ jmeter_test/
 PRESS_TEST.md
 PROJECT_GUIDE.md
 LEARNING_GUIDE.md
+.workbuddy/
+
+### Environment ###
+.env

@@ -5,8 +5,8 @@ spring:
   # 数据源
   datasource:
     url: jdbc:mysql://localhost:3306/seckill_mall?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
-    username: root
-    password: 18765105
+    username: ${MYSQL_USERNAME:root}
+    password: ${MYSQL_PASSWORD:}
     driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
       minimum-idle: 5
@@ -32,8 +32,8 @@ spring:
   rabbitmq:
     host: localhost
     port: 5672
-    username: admin
-    password: admin123
+    username: ${RABBITMQ_USERNAME:admin}
+    password: ${RABBITMQ_PASSWORD:}
     virtual-host: /
     publisher-confirm-type: correlated
     publisher-returns: true
@@ -81,3 +81,13 @@ server:
 logging:
   level:
     com.sygzcd.seckillmall: info
+
+# Actuator 健康检查
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
