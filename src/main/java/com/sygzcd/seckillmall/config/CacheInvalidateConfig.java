@@ -1,8 +1,8 @@
 package com.sygzcd.seckillmall.config;
 
 import com.github.benmanes.caffeine.cache.Cache;
+import com.sygzcd.seckillmall.common.ProductDTO;
 import com.sygzcd.seckillmall.common.UserDTO;
-import com.sygzcd.seckillmall.entity.Product;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
@@ -26,7 +26,7 @@ public class CacheInvalidateConfig {
     public static final String USER_CACHE_INVALIDATE_CHANNEL = "cache:invalidate:user";
 
     @Autowired
-    private Cache<String, Product> caffeineCache;
+    private Cache<String, ProductDTO> caffeineCache;
 
     @Autowired
     private Cache<String, UserDTO> userCaffeineCache;
