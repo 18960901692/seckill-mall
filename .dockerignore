@@ -1,0 +1,29 @@
+# Maven
+target/
+*.iml
+.idea/
+.vscode/
+*.log
+
+# Git
+.git/
+.gitignore
+
+# Documents
+*.md
+!README.md
+AGENTS.md
+DEVELOP_LOG.md
+INTERVIEW_QUESTIONS.md
+PROJECT_GUIDE.md
+LEARNING_GUIDE.md
+PRESS_TEST.md
+jmeter_test/
+高并发学习商城秒杀系统-项目规划.md
+
+# Local tools
+.workbuddy/
+
+# Build
+docker/
+Dockerfile*
