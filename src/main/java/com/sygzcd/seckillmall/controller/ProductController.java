@@ -1,9 +1,9 @@
 package com.sygzcd.seckillmall.controller;
 
 import com.sygzcd.seckillmall.common.BusinessException;
+import com.sygzcd.seckillmall.common.ProductDTO;
 import com.sygzcd.seckillmall.common.Result;
 import com.sygzcd.seckillmall.common.ResultCode;
-import com.sygzcd.seckillmall.entity.Product;
 import com.sygzcd.seckillmall.service.ProductService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -20,8 +20,8 @@ public class ProductController {
 
     @Operation(summary = "查询商品详情")
     @GetMapping("/{id}")
-    public Result<Product> getById(@PathVariable Long id) {
-        Product product = productService.getById(id);
+    public Result<ProductDTO> getById(@PathVariable Long id) {
+        ProductDTO product = productService.getById(id);
         if (product == null) {
             throw new BusinessException(ResultCode.NOT_FOUND);
         }

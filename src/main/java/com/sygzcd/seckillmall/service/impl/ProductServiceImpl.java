@@ -1,6 +1,7 @@
 package com.sygzcd.seckillmall.service.impl;
 
 import com.github.benmanes.caffeine.cache.Cache;
+import com.sygzcd.seckillmall.common.ProductDTO;
 import com.sygzcd.seckillmall.config.CacheInvalidateConfig;
 import com.sygzcd.seckillmall.entity.Product;
 import com.sygzcd.seckillmall.mapper.ProductMapper;
@@ -30,7 +31,7 @@ public class ProductServiceImpl implements ProductService {
     private StringRedisTemplate stringRedisTemplate;
 
     @Autowired
-    private Cache<String, Product> caffeineCache;
+    private Cache<String, ProductDTO> caffeineCache;
 
     @Autowired
     private RedissonClient redissonClient;
@@ -40,20 +41,21 @@ public class ProductServiceImpl implements ProductService {
     private static final String LOCK_KEY = "lock:product:";
 
     @Override
-    public Product getById(Long id) {
+    public ProductDTO getById(Long id) {
         String key = PRODUCT_KEY + id;
 
-        // 第一层：Caffeine 本地缓存
-        Product product = caffeineCache.getIfPresent(key);
-        if (product != null) {
-            return product;
+        // 第一层：Caffeine 本地缓存（存 ProductDTO，不含 stock/version）
+        ProductDTO productDTO = caffeineCache.getIfPresent(key);
+        if (productDTO != null) {
+            return productDTO;
         }
 
-        // 第二层：Redis 缓存
-        product = (Product) redisTemplate.opsForValue().get(key);
+        // 第二层：Redis 缓存（存完整 Product）
+        Product product = (Product) redisTemplate.opsForValue().get(key);
         if (product != null) {
-            caffeineCache.put(key, product);
-            return product;
+            productDTO = toDTO(product);
+            caffeineCache.put(key, productDTO);
+            return productDTO;
         }
 
         // 第三层：缓存未命中，使用互斥锁防止缓存击穿
@@ -69,50 +71,52 @@ public class ProductServiceImpl implements ProductService {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             // 线程被中断时直接查 DB 兜底
-            return productMapper.selectById(id);
+            return toDTO(productMapper.selectById(id));
         }
         if (!locked) {
             // 等待超时仍未获取锁，说明数据可能已被其他线程加载到 Redis
             product = (Product) redisTemplate.opsForValue().get(key);
             if (product != null) {
-                caffeineCache.put(key, product);
-                return product;
+                productDTO = toDTO(product);
+                caffeineCache.put(key, productDTO);
+                return productDTO;
             }
             // Redis 也未命中（极端情况），直接查 DB
-            return productMapper.selectById(id);
+            return toDTO(productMapper.selectById(id));
         }
 
         try {
             // 再次检查缓存（双重检查）
             product = (Product) redisTemplate.opsForValue().get(key);
             if (product != null) {
-                caffeineCache.put(key, product);
-                return product;
+                productDTO = toDTO(product);
+                caffeineCache.put(key, productDTO);
+                return productDTO;
             }
 
             // 从数据库加载
             product = productMapper.selectById(id);
             if (product != null) {
+                // Redis 存完整 Product（包括 stock/version，兼容现有数据）
                 // 热点商品永不过期，普通商品设置随机TTL防止缓存雪崩
                 if (product.getHot() != null && product.getHot() == 1) {
-                    // 热点商品：永不过期
                     redisTemplate.opsForValue().set(key, product);
                 } else {
-                    // 普通商品：基础TTL 30分钟 + 随机抖动0-5分钟
                     long baseTtl = 30 * 60;
                     long randomTtl = ThreadLocalRandom.current().nextLong(0, 5 * 60);
                     redisTemplate.opsForValue().set(key, product, baseTtl + randomTtl, TimeUnit.SECONDS);
                 }
-                caffeineCache.put(key, product);
+                // Caffeine 存 ProductDTO（不含 stock/version，避免脏数据）
+                productDTO = toDTO(product);
+                caffeineCache.put(key, productDTO);
             }
         } finally {
-            // 释放锁
             if (lock.isHeldByCurrentThread()) {
                 lock.unlock();
             }
         }
 
-        return product;
+        return productDTO;
     }
 
     @Override
@@ -146,12 +150,13 @@ public class ProductServiceImpl implements ProductService {
             String key = PRODUCT_KEY + id;
             String stockKey = STOCK_KEY + id;
 
-            // 商品信息和库存都预热到 Redis
+            // 商品信息预热到 Redis（存完整 Product）
             redisTemplate.opsForValue().set(key, product);
+            // 库存预热到 Redis（独立 key）
             redisTemplate.opsForValue().set(stockKey, product.getStock());
 
-            // 仅商品信息预热到 Caffeine（库存不进本地缓存）
-            caffeineCache.put(key, product);
+            // 仅商品信息预热到 Caffeine（存 ProductDTO，不含库存）
+            caffeineCache.put(key, toDTO(product));
         }
     }
 
@@ -170,7 +175,7 @@ public class ProductServiceImpl implements ProductService {
         stringRedisTemplate.delete(key);
         stringRedisTemplate.delete(stockKey);
 
-        // 2. 失效本地 Caffeine 缓存（仅商品信息）
+        // 2. 失效本地 Caffeine 缓存（仅商品信息 ProductDTO）
         caffeineCache.invalidate(key);
 
         // 3. 广播通知其他实例清除本地 Caffeine
@@ -178,5 +183,22 @@ public class ProductServiceImpl implements ProductService {
         stringRedisTemplate.convertAndSend(CacheInvalidateConfig.CACHE_INVALIDATE_CHANNEL, key);
 
         log.debug("商品缓存已失效，商品ID: {}", id);
+    }
+
+    /**
+     * Product → ProductDTO 转换
+     * 脱敏高频变更字段（stock、version），仅保留基本信息
+     */
+    private ProductDTO toDTO(Product product) {
+        if (product == null) {
+            return null;
+        }
+        ProductDTO dto = new ProductDTO();
+        dto.setId(product.getId());
+        dto.setName(product.getName());
+        dto.setPrice(product.getPrice());
+        dto.setHot(product.getHot());
+        dto.setCreateTime(product.getCreateTime());
+        return dto;
     }
 }
