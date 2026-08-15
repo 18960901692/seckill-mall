@@ -2,4 +2,14 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.sygzcd.seckillmall.mapper.AnswerRecordMapper">
 
+    <!-- 批量插入答题记录 -->
+    <!-- 单条 INSERT ... VALUES (...),(...) 比逐条 INSERT 性能更好 -->
+    <insert id="insertBatch">
+        INSERT INTO answer_record (user_id, question_id, correct, create_time)
+        VALUES
+        <foreach collection="list" item="item" separator=",">
+            (#{item.userId}, #{item.questionId}, #{item.correct}, NOW())
+        </foreach>
+    </insert>
+
 </mapper>
