@@ -10,7 +10,11 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
+import jakarta.servlet.ServletRequest;
+import jakarta.servlet.ServletResponse;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpSession;
+import java.util.Arrays;
 
 /**
  * 日志切面
@@ -36,10 +40,15 @@ public class LogAspect {
             requestInfo = request.getMethod() + " " + request.getRequestURI();
         }
 
-        // 记录入参
+        // 记录入参（过滤 Servlet 类型，避免 Jackson 序列化失败）
         String args = "";
         try {
-            args = objectMapper.writeValueAsString(pjp.getArgs());
+            Object[] filtered = Arrays.stream(pjp.getArgs())
+                    .filter(a -> !(a instanceof ServletRequest)
+                              && !(a instanceof ServletResponse)
+                              && !(a instanceof HttpSession))
+                    .toArray();
+            args = objectMapper.writeValueAsString(filtered);
             if (args.length() > 500) {
                 args = args.substring(0, 500) + "...";
             }

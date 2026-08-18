@@ -20,6 +20,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
@@ -139,6 +140,7 @@ public class SeckillServiceImpl implements SeckillService {
                     newOrder.setProductId(productId);
                     newOrder.setAmount(product.getPrice()); // 订单快照：锁定下单时的商品价格
                     newOrder.setStatus(0);
+                    newOrder.setCreateTime(LocalDateTime.now()); // 使用应用时区（Asia/Shanghai），避免数据库时区问题
                     ordersMapper.insert(newOrder);
 
                     return newOrder;

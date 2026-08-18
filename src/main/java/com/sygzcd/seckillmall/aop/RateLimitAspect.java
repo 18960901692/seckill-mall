@@ -38,8 +38,8 @@ public class RateLimitAspect {
     @Autowired
     private BlackListService blackListService;
 
-    // 本地信号量：单机限流 100 并发
-    private final Semaphore semaphore = new Semaphore(100);
+    // 本地信号量：单机限流 10000 并发（本地快速降级，主要限流依赖 Redis 分布式限流）
+    private final Semaphore semaphore = new Semaphore(10000);
 
     // Lua 脚本：滑动窗口限流（使用 StringRedisTemplate，参数全部传字符串）
     private static final RedisScript<Long> SLIDING_WINDOW_SCRIPT = new DefaultRedisScript<>(
