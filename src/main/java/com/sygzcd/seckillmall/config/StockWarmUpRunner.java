@@ -7,6 +7,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -26,6 +27,9 @@ public class StockWarmUpRunner implements CommandLineRunner {
     @Autowired
     private RedisTemplate<String, Object> redisTemplate;
 
+    @Autowired
+    private StringRedisTemplate stringRedisTemplate;
+
     private static final String STOCK_KEY = "seckill:stock:";
     private static final String PRODUCT_KEY = "product:";
 
@@ -42,9 +46,9 @@ public class StockWarmUpRunner implements CommandLineRunner {
         }
 
         for (Product product : hotProducts) {
-            // 预热库存到 Redis（秒杀预扣使用）
-            redisTemplate.opsForValue().set(STOCK_KEY + product.getId(), product.getStock());
-            // 预热商品信息到 Redis（三级缓存使用）
+            // 预热库存到 Redis（使用 StringRedisTemplate 保证纯数字字符串，秒杀预扣使用 DECR/INCR 命令）
+            stringRedisTemplate.opsForValue().set(STOCK_KEY + product.getId(), String.valueOf(product.getStock()));
+            // 预热商品信息到 Redis（三级缓存使用，使用 RedisTemplate 存储完整 Product 对象）
             redisTemplate.opsForValue().set(PRODUCT_KEY + product.getId(), product);
         }
 

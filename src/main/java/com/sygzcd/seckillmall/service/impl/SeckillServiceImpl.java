@@ -107,11 +107,11 @@ public class SeckillServiceImpl implements SeckillService {
                 throw new BusinessException("系统繁忙，请稍后重试");
             }
 
-            // 5. Redis 预扣库存（原子操作）
-            Long remainStock = redisTemplate.opsForValue().decrement(stockKey);
+            // 5. Redis 预扣库存（原子操作，使用 StringRedisTemplate 保证值为纯数字字符串）
+            Long remainStock = stringRedisTemplate.opsForValue().decrement(stockKey);
             decremented = true;
             if (remainStock == null || remainStock < 0) {
-                redisTemplate.opsForValue().increment(stockKey);
+                stringRedisTemplate.opsForValue().increment(stockKey);
                 stringRedisTemplate.delete(userKey);
                 throw new BusinessException("商品已售罄");
             }
@@ -157,7 +157,7 @@ public class SeckillServiceImpl implements SeckillService {
                 log.info("秒杀下单成功，订单号: {}, 商品ID: {}, 用户ID: {}", order.getOrderNo(), productId, userId);
             } catch (BusinessException e) {
                 // MySQL 操作失败（乐观锁冲突等），回滚 Redis 预扣和防重标记
-                redisTemplate.opsForValue().increment(stockKey);
+                stringRedisTemplate.opsForValue().increment(stockKey);
                 stringRedisTemplate.delete(userKey);
                 throw e;
             }
@@ -168,7 +168,7 @@ public class SeckillServiceImpl implements SeckillService {
             Thread.currentThread().interrupt();
             // 防御性补偿：如果 DECR 已执行，须回补 Redis 库存
             if (decremented) {
-                redisTemplate.opsForValue().increment(stockKey);
+                stringRedisTemplate.opsForValue().increment(stockKey);
             }
             stringRedisTemplate.delete(userKey);
             throw new BusinessException("系统繁忙");
@@ -176,7 +176,7 @@ public class SeckillServiceImpl implements SeckillService {
             throw e;
         } catch (Exception e) {
             log.error("秒杀下单异常，用户ID: {}, 商品ID: {}", userId, productId, e);
-            redisTemplate.opsForValue().increment(stockKey); // 回滚 Redis 预扣库存
+            stringRedisTemplate.opsForValue().increment(stockKey); // 回滚 Redis 预扣库存
             stringRedisTemplate.delete(userKey);
             // 唯一索引冲突兜底：order_no唯一索引冲突（UUID碰撞概率极低，主要靠Redis防重key）
             if (e instanceof org.springframework.dao.DuplicateKeyException) {

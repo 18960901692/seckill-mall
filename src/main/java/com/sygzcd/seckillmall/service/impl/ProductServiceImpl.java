@@ -124,19 +124,21 @@ public class ProductServiceImpl implements ProductService {
         String key = STOCK_KEY + id;
 
         // 第一层：Redis（实时库存，秒杀一致性保证）
-        Integer stock = (Integer) redisTemplate.opsForValue().get(key);
-        if (stock != null) {
-            return stock;
+        // 使用 StringRedisTemplate 读取，确保与 DECR/INCR 操作一致
+        String stockStr = stringRedisTemplate.opsForValue().get(key);
+        if (stockStr != null) {
+            return Integer.parseInt(stockStr);
         }
 
         // 第二层：MySQL（Redis 未初始化时回填，返回后后续请求走 Redis）
         Product product = productMapper.selectById(id);
         if (product != null) {
-            stock = product.getStock();
+            Integer stock = product.getStock();
+            // 使用 StringRedisTemplate 写入，确保值为纯数字字符串
             // 随机TTL防止缓存雪崩：基础30分钟 + 随机0-5分钟
             long baseTtl = 30 * 60;
             long randomTtl = ThreadLocalRandom.current().nextLong(0, 5 * 60);
-            redisTemplate.opsForValue().set(key, stock, baseTtl + randomTtl, TimeUnit.SECONDS);
+            stringRedisTemplate.opsForValue().set(key, String.valueOf(stock), baseTtl + randomTtl, TimeUnit.SECONDS);
             return stock;
         }
 
@@ -150,10 +152,10 @@ public class ProductServiceImpl implements ProductService {
             String key = PRODUCT_KEY + id;
             String stockKey = STOCK_KEY + id;
 
-            // 商品信息预热到 Redis（存完整 Product）
+            // 商品信息预热到 Redis（存完整 Product，使用 RedisTemplate）
             redisTemplate.opsForValue().set(key, product);
-            // 库存预热到 Redis（独立 key）
-            redisTemplate.opsForValue().set(stockKey, product.getStock());
+            // 库存预热到 Redis（独立 key，使用 StringRedisTemplate 保证纯数字字符串）
+            stringRedisTemplate.opsForValue().set(stockKey, String.valueOf(product.getStock()));
 
             // 仅商品信息预热到 Caffeine（存 ProductDTO，不含库存）
             caffeineCache.put(key, toDTO(product));
@@ -163,17 +165,15 @@ public class ProductServiceImpl implements ProductService {
     /**
      * 失效商品缓存
      * 清除 Redis product:{id} + 失效 Caffeine 本地缓存 + 广播通知其他实例
-     * 库存仅存在 Redis，失效时直接删除即可，不经过 Caffeine
+     * 注意：seckill:stock:{id} 是实时计数器，由秒杀/取消订单逻辑维护，不在此删除
      */
     @Override
     public void invalidateCache(Long id) {
         String key = PRODUCT_KEY + id;
-        String stockKey = STOCK_KEY + id;
 
-        // 1. 清除 Redis 缓存（商品信息 + 库存）
+        // 1. 清除 Redis 商品信息缓存
         //    使用 StringRedisTemplate 避免 Jackson 序列化给 key 加双引号
         stringRedisTemplate.delete(key);
-        stringRedisTemplate.delete(stockKey);
 
         // 2. 失效本地 Caffeine 缓存（仅商品信息 ProductDTO）
         caffeineCache.invalidate(key);

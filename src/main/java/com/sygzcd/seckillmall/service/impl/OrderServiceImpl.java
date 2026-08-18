@@ -15,6 +15,7 @@ import com.sygzcd.seckillmall.service.ProductService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -38,6 +39,9 @@ public class OrderServiceImpl implements OrderService {
 
     @Autowired
     private RedisTemplate<String, Object> redisTemplate;
+
+    @Autowired
+    private StringRedisTemplate stringRedisTemplate;
 
     @Autowired
     private ProductService productService;
@@ -93,16 +97,16 @@ public class OrderServiceImpl implements OrderService {
 
         // 事务提交后执行以下操作（若事务回滚则不会执行）
         if (cancelled[0]) {
-            // 回滚 Redis 库存
+            // 回滚 Redis 库存（使用 StringRedisTemplate 保证值为纯数字字符串）
             String stockKey = STOCK_KEY + productId;
-            redisTemplate.opsForValue().increment(stockKey);
+            stringRedisTemplate.opsForValue().increment(stockKey);
 
             // 失效商品缓存（Caffeine + Redis + 广播通知其他实例）
             productService.invalidateCache(productId);
 
             // 删除用户抢购记录，允许重新抢购
             String userKey = USER_SECKILL_KEY + productId + ":" + userId;
-            redisTemplate.delete(userKey);
+            stringRedisTemplate.delete(userKey);
 
             log.info("订单取消成功（状态流转），订单号: {}, 商品ID: {}, 用户ID: {}", orderNo, productId, userId);
         }
