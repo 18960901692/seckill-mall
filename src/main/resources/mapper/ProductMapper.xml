@@ -12,4 +12,10 @@
           AND version = #{version}
     </update>
 
+    <!-- 查询所有商品ID和库存（用于定时对账） -->
+    <select id="selectAllStock" resultType="com.sygzcd.seckillmall.entity.Product">
+        SELECT id, stock
+        FROM product
+    </select>
+
 </mapper>

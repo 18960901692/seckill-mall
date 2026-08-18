@@ -5,6 +5,8 @@ import com.sygzcd.seckillmall.entity.Product;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
+import java.util.List;
+
 /**
  * 商品 Mapper
  */
@@ -18,4 +20,9 @@ public interface ProductMapper extends BaseMapper<Product> {
      * @return 影响行数
      */
     int decreaseStockWithVersion(@Param("id") Long id, @Param("version") Integer version);
+
+    /**
+     * 查询所有商品ID和库存（用于定时对账）
+     */
+    List<Product> selectAllStock();
 }
