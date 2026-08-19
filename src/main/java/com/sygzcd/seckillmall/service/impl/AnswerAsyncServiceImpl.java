@@ -88,9 +88,11 @@ public class AnswerAsyncServiceImpl implements AnswerAsyncService {
 
         List<AnswerRecord> records = parseRecords(rawData);
         if (records.isEmpty()) {
-            // 数据格式异常，清空处理队列避免死锁
-            stringRedisTemplate.delete(PROCESSING_QUEUE_KEY);
-            log.warn("处理队列数据格式异常，已清空");
+            // 本批次全部为不可解析的脏数据：逐条清理，避免阻塞后续正常数据，绝不整体清空队列
+            for (String data : rawData) {
+                stringRedisTemplate.opsForList().remove(PROCESSING_QUEUE_KEY, 1, data);
+            }
+            log.warn("处理队列本批次 {} 条均为格式异常数据，已逐条清理", rawData.size());
             return;
         }
 
@@ -102,9 +104,11 @@ public class AnswerAsyncServiceImpl implements AnswerAsyncService {
             }
             log.info("处理队列恢复 {} 条答题记录", records.size());
         } catch (DuplicateKeyException e) {
-            // 唯一索引冲突：数据已存在，直接清空处理队列
-            stringRedisTemplate.delete(PROCESSING_QUEUE_KEY);
-            log.warn("处理队列数据重复，已清空（唯一索引幂等）");
+            // 唯一索引冲突：数据已存在（幂等安全），逐条清理本批次，绝不整体清空队列，避免误删其他正常数据
+            log.warn("处理队列数据重复，逐条清理（唯一索引幂等）", e);
+            for (String data : rawData) {
+                stringRedisTemplate.opsForList().remove(PROCESSING_QUEUE_KEY, 1, data);
+            }
         } catch (Exception e) {
             // 恢复失败，数据留在处理队列，下次定时任务继续重试
             log.error("处理队列恢复失败，{} 条记录等待下次重试", records.size(), e);
@@ -147,9 +151,11 @@ public class AnswerAsyncServiceImpl implements AnswerAsyncService {
             }
             log.info("批量落库 {} 条答题记录", records.size());
         } catch (DuplicateKeyException e) {
-            // 唯一索引冲突：数据已存在（重复消费），直接清空处理队列
-            stringRedisTemplate.delete(PROCESSING_QUEUE_KEY);
-            log.warn("主队列数据重复，已清空处理队列（唯一索引幂等）");
+            // 唯一索引冲突：数据已存在（重复消费/重答，幂等安全），逐条清理本批次，绝不整体清空队列
+            log.warn("主队列数据重复，逐条清理处理队列（唯一索引幂等）", e);
+            for (String data : rawData) {
+                stringRedisTemplate.opsForList().remove(PROCESSING_QUEUE_KEY, 1, data);
+            }
         } catch (Exception e) {
             // 落库失败，数据留在处理队列，下次定时任务通过 recoverProcessingQueue 恢复
             log.error("批量落库失败，{} 条记录留在处理队列等待补偿", records.size(), e);

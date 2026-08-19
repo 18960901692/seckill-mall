@@ -10,6 +10,9 @@
         <foreach collection="list" item="item" separator=",">
             (#{item.userId}, #{item.questionId}, #{item.correct}, NOW())
         </foreach>
+        <!-- 唯一键 (user_id, question_id) 冲突时：数据已存在，幂等忽略，不抛异常；
+             避免上游因 DuplicateKeyException 触发清空整个处理队列导致其他正常数据丢失 -->
+        ON DUPLICATE KEY UPDATE id = id
     </insert>
 
 </mapper>
