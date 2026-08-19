@@ -1,6 +1,7 @@
 package com.sygzcd.seckillmall.config;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.sygzcd.seckillmall.common.ProductDTO;
 import com.sygzcd.seckillmall.entity.Product;
 import com.sygzcd.seckillmall.mapper.ProductMapper;
 import lombok.extern.slf4j.Slf4j;
@@ -48,8 +49,14 @@ public class StockWarmUpRunner implements CommandLineRunner {
         for (Product product : hotProducts) {
             // 预热库存到 Redis（使用 StringRedisTemplate 保证纯数字字符串，秒杀预扣使用 DECR/INCR 命令）
             stringRedisTemplate.opsForValue().set(STOCK_KEY + product.getId(), String.valueOf(product.getStock()));
-            // 预热商品信息到 Redis（三级缓存使用，使用 RedisTemplate 存储完整 Product 对象）
-            redisTemplate.opsForValue().set(PRODUCT_KEY + product.getId(), product);
+            // 预热商品信息到 Redis（存 ProductDTO，与三级缓存 Caffeine 一致，不含库存字段）
+            ProductDTO dto = new ProductDTO();
+            dto.setId(product.getId());
+            dto.setName(product.getName());
+            dto.setPrice(product.getPrice());
+            dto.setHot(product.getHot());
+            dto.setCreateTime(product.getCreateTime());
+            redisTemplate.opsForValue().set(PRODUCT_KEY + product.getId(), dto);
         }
 
         log.info("热点商品库存预热完成，共预热 {} 个商品", hotProducts.size());

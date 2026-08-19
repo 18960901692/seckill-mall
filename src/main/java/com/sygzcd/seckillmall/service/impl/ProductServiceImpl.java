@@ -50,12 +50,11 @@ public class ProductServiceImpl implements ProductService {
             return productDTO;
         }
 
-        // 第二层：Redis 缓存（存完整 Product）
-        Product product = (Product) redisTemplate.opsForValue().get(key);
-        if (product != null) {
-            productDTO = toDTO(product);
-            caffeineCache.put(key, productDTO);
-            return productDTO;
+        // 第二层：Redis 缓存（存 ProductDTO，与 Caffeine 一致，不含 stock/version）
+        ProductDTO redisDTO = (ProductDTO) redisTemplate.opsForValue().get(key);
+        if (redisDTO != null) {
+            caffeineCache.put(key, redisDTO);
+            return redisDTO;
         }
 
         // 第三层：缓存未命中，使用互斥锁防止缓存击穿
@@ -75,11 +74,10 @@ public class ProductServiceImpl implements ProductService {
         }
         if (!locked) {
             // 等待超时仍未获取锁，说明数据可能已被其他线程加载到 Redis
-            product = (Product) redisTemplate.opsForValue().get(key);
-            if (product != null) {
-                productDTO = toDTO(product);
-                caffeineCache.put(key, productDTO);
-                return productDTO;
+            redisDTO = (ProductDTO) redisTemplate.opsForValue().get(key);
+            if (redisDTO != null) {
+                caffeineCache.put(key, redisDTO);
+                return redisDTO;
             }
             // Redis 也未命中（极端情况），直接查 DB
             return toDTO(productMapper.selectById(id));
@@ -87,27 +85,26 @@ public class ProductServiceImpl implements ProductService {
 
         try {
             // 再次检查缓存（双重检查）
-            product = (Product) redisTemplate.opsForValue().get(key);
-            if (product != null) {
-                productDTO = toDTO(product);
-                caffeineCache.put(key, productDTO);
-                return productDTO;
+            redisDTO = (ProductDTO) redisTemplate.opsForValue().get(key);
+            if (redisDTO != null) {
+                caffeineCache.put(key, redisDTO);
+                return redisDTO;
             }
 
             // 从数据库加载
-            product = productMapper.selectById(id);
+            Product product = productMapper.selectById(id);
             if (product != null) {
-                // Redis 存完整 Product（包括 stock/version，兼容现有数据）
+                productDTO = toDTO(product);
+                // Redis 存 ProductDTO（与 Caffeine 一致，不含 stock/version，避免脏数据）
                 // 热点商品永不过期，普通商品设置随机TTL防止缓存雪崩
                 if (product.getHot() != null && product.getHot() == 1) {
-                    redisTemplate.opsForValue().set(key, product);
+                    redisTemplate.opsForValue().set(key, productDTO);
                 } else {
                     long baseTtl = 30 * 60;
                     long randomTtl = ThreadLocalRandom.current().nextLong(0, 5 * 60);
-                    redisTemplate.opsForValue().set(key, product, baseTtl + randomTtl, TimeUnit.SECONDS);
+                    redisTemplate.opsForValue().set(key, productDTO, baseTtl + randomTtl, TimeUnit.SECONDS);
                 }
                 // Caffeine 存 ProductDTO（不含 stock/version，避免脏数据）
-                productDTO = toDTO(product);
                 caffeineCache.put(key, productDTO);
             }
         } finally {
@@ -151,14 +148,15 @@ public class ProductServiceImpl implements ProductService {
         if (product != null) {
             String key = PRODUCT_KEY + id;
             String stockKey = STOCK_KEY + id;
+            ProductDTO dto = toDTO(product);
 
-            // 商品信息预热到 Redis（存完整 Product，使用 RedisTemplate）
-            redisTemplate.opsForValue().set(key, product);
+            // 商品信息预热到 Redis（存 ProductDTO，与 Caffeine 一致，不含库存）
+            redisTemplate.opsForValue().set(key, dto);
             // 库存预热到 Redis（独立 key，使用 StringRedisTemplate 保证纯数字字符串）
             stringRedisTemplate.opsForValue().set(stockKey, String.valueOf(product.getStock()));
 
-            // 仅商品信息预热到 Caffeine（存 ProductDTO，不含库存）
-            caffeineCache.put(key, toDTO(product));
+            // 商品信息预热到 Caffeine（存 ProductDTO，不含库存）
+            caffeineCache.put(key, dto);
         }
     }
 
