@@ -23,4 +23,9 @@ public interface BloomFilterService {
      * @param productId 商品ID
      */
     void put(Long productId);
+
+    /**
+     * 从 DB 全量重建布隆过滤器（定时刷新，覆盖启动后新增/外部直写库的商品）
+     */
+    void refresh();
 }

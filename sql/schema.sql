@@ -38,6 +38,10 @@ CREATE TABLE IF NOT EXISTS orders (
 -- 用于秒杀防重的 DB 兜底：SELECT ... WHERE user_id=? AND product_id=? AND status IN (0,1)
 ALTER TABLE orders ADD INDEX idx_user_product_status (user_id, product_id, status);
 
+-- 对账任务索引：支撑「超时未支付订单兜底取消」扫描 WHERE status=0 AND create_time < ?
+-- 否则全局对账任务（OrderReconcileService）每次全表扫 orders，数据量大时成性能瓶颈
+ALTER TABLE orders ADD INDEX idx_status_ct (status, create_time);
+
 -- 用户表（分布式 Session 关联，密码 BCrypt 加密存储）
 CREATE TABLE IF NOT EXISTS user (
     id          BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '用户ID',

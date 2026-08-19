@@ -5,6 +5,7 @@ import com.sygzcd.seckillmall.common.ProductDTO;
 import com.sygzcd.seckillmall.config.CacheInvalidateConfig;
 import com.sygzcd.seckillmall.entity.Product;
 import com.sygzcd.seckillmall.mapper.ProductMapper;
+import com.sygzcd.seckillmall.service.BloomFilterService;
 import com.sygzcd.seckillmall.service.ProductService;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RLock;
@@ -35,6 +36,9 @@ public class ProductServiceImpl implements ProductService {
 
     @Autowired
     private RedissonClient redissonClient;
+
+    @Autowired
+    private BloomFilterService bloomFilterService;
 
     private static final String PRODUCT_KEY = "product:";
     private static final String STOCK_KEY = "seckill:stock:";
@@ -149,6 +153,9 @@ public class ProductServiceImpl implements ProductService {
             String key = PRODUCT_KEY + id;
             String stockKey = STOCK_KEY + id;
             ProductDTO dto = toDTO(product);
+
+            // 新商品激活即时补位：把商品ID加入布隆过滤器，避免被防穿透拦截误判为"不存在"
+            bloomFilterService.put(product.getId());
 
             // 商品信息预热到 Redis（存 ProductDTO，与 Caffeine 一致，不含库存）
             redisTemplate.opsForValue().set(key, dto);
