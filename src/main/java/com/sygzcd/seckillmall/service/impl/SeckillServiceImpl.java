@@ -152,9 +152,9 @@ public class SeckillServiceImpl implements SeckillService {
                 try {
                     orderDelayProducer.sendDelayMessage(order.getOrderNo());
                 } catch (Exception e) {
-                    // 发送失败将订单号写入 Redis 延迟重试队列，由定时任务补偿
+                    // 发送失败将订单号写入 Redis 延迟重试队列（使用 StringRedisTemplate，与 DelayRetryService 读取端一致），由定时任务补偿
                     log.error("延时消息发送失败，订单号: {}，已加入重试队列", order.getOrderNo(), e);
-                    redisTemplate.opsForList().rightPush("seckill:delay:retry", order.getOrderNo());
+                    stringRedisTemplate.opsForList().rightPush("seckill:delay:retry", order.getOrderNo());
                 }
                 log.info("秒杀下单成功，订单号: {}, 商品ID: {}, 用户ID: {}", order.getOrderNo(), productId, userId);
             } catch (BusinessException e) {
