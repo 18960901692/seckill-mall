@@ -2,11 +2,11 @@ spring:
   application:
     name: seckill-mall
 
-  # 数据源
+  # 数据源 - 连接 Docker 中的 MySQL（映射端口 3307）
   datasource:
-    url: jdbc:mysql://localhost:3306/seckill_mall?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    url: jdbc:mysql://localhost:3307/seckill_mall?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
     username: ${MYSQL_USERNAME:root}
-    password: ${MYSQL_PASSWORD:}
+    password: ${MYSQL_PASSWORD:18765105}
     driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
       minimum-idle: 5
@@ -28,12 +28,12 @@ spring:
           max-idle: 8
           min-idle: 4
 
-  # RabbitMQ
+  # RabbitMQ - 连接 Docker 中的 RabbitMQ
   rabbitmq:
     host: localhost
     port: 5672
     username: ${RABBITMQ_USERNAME:admin}
-    password: ${RABBITMQ_PASSWORD:}
+    password: ${RABBITMQ_PASSWORD:admin123}
     virtual-host: /
     publisher-confirm-type: correlated
     publisher-returns: true

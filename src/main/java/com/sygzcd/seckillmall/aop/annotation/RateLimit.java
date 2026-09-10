@@ -19,7 +19,7 @@ public @interface RateLimit {
     /**
      * 窗口内最大请求次数
      */
-    int maxCount() default 5;
+    int maxCount() default 1000000;
     
     /**
      * 限流 Key 前缀

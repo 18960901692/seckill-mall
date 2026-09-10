@@ -33,14 +33,9 @@ build/
 .vscode/
 
 ### Private docs ###
-高并发学习商城秒杀系统-项目规划.md
-AGENTS.md
-DEVELOP_LOG.md
-INTERVIEW_QUESTIONS.md
 jmeter_test/
-PRESS_TEST.md
-PROJECT_GUIDE.md
-LEARNING_GUIDE.md
+文档/
+
 .workbuddy/
 
 ### Environment ###
