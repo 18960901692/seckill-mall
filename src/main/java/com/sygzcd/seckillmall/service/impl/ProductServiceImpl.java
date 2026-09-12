@@ -43,18 +43,43 @@ public class ProductServiceImpl implements ProductService {
     private static final String PRODUCT_KEY = "product:";
     private static final String STOCK_KEY = "seckill:stock:";
     private static final String LOCK_KEY = "lock:product:";
+    /** 空值标记 key 前缀：与 product:{id} 隔离，避免污染 ProductDTO 反序列化 */
+    private static final String EMPTY_KEY_PREFIX = "product:empty:";
+    /** 空值缓存 TTL：60s 基础 + 0~30s 随机，挡住布隆误判流量，同时避免新上架商品被长期挡住 */
+    private static final long EMPTY_BASE_TTL = 60;
+    private static final long EMPTY_RANDOM_TTL = 30;
+
+    /**
+     * 空值标记单例：Caffeine 不能存 null，用 id=null 的 ProductDTO 表示"DB 确认不存在"。
+     * 正常商品 id 不可能为 null，命中后以 getId() == null 识别。
+     */
+    private static final ProductDTO EMPTY_MARKER = new ProductDTO();
 
     @Override
     public ProductDTO getById(Long id) {
+        // 第 0 层：布隆过滤器前置。false=一定不存在，直接返回，不碰缓存/DB，防缓存穿透
+        // （过滤器未就绪时 mightContain 默认放行，不会误伤；布隆 1% 误判由下方空值缓存兜住）
+        if (!bloomFilterService.mightContain(id)) {
+            return null;
+        }
+
         String key = PRODUCT_KEY + id;
+        String emptyKey = EMPTY_KEY_PREFIX + id;
 
         // 第一层：Caffeine 本地缓存（存 ProductDTO，不含 stock/version）
         ProductDTO productDTO = caffeineCache.getIfPresent(key);
         if (productDTO != null) {
-            return productDTO;
+            // 命中空值标记：DB 已确认不存在；否则是正常商品
+            return productDTO.getId() == null ? null : productDTO;
         }
 
-        // 第二层：Redis 缓存（存 ProductDTO，与 Caffeine 一致，不含 stock/version）
+        // 第二层：Redis 缓存
+        // 2.1 先查空值标记（独立 key，StringRedisTemplate 存纯字符串 "1"）
+        if ("1".equals(stringRedisTemplate.opsForValue().get(emptyKey))) {
+            caffeineCache.put(key, EMPTY_MARKER);
+            return null;
+        }
+        // 2.2 再查正常商品缓存（存 ProductDTO，与 Caffeine 一致，不含 stock/version）
         ProductDTO redisDTO = (ProductDTO) redisTemplate.opsForValue().get(key);
         if (redisDTO != null) {
             caffeineCache.put(key, redisDTO);
@@ -77,7 +102,11 @@ public class ProductServiceImpl implements ProductService {
             return toDTO(productMapper.selectById(id));
         }
         if (!locked) {
-            // 等待超时仍未获取锁，说明数据可能已被其他线程加载到 Redis
+            // 等待超时仍未获取锁，说明数据可能已被其他线程加载，双重检查两种缓存
+            if ("1".equals(stringRedisTemplate.opsForValue().get(emptyKey))) {
+                caffeineCache.put(key, EMPTY_MARKER);
+                return null;
+            }
             redisDTO = (ProductDTO) redisTemplate.opsForValue().get(key);
             if (redisDTO != null) {
                 caffeineCache.put(key, redisDTO);
@@ -88,7 +117,11 @@ public class ProductServiceImpl implements ProductService {
         }
 
         try {
-            // 再次检查缓存（双重检查）
+            // 再次检查缓存（双重检查）：空值标记 + 正常缓存
+            if ("1".equals(stringRedisTemplate.opsForValue().get(emptyKey))) {
+                caffeineCache.put(key, EMPTY_MARKER);
+                return null;
+            }
             redisDTO = (ProductDTO) redisTemplate.opsForValue().get(key);
             if (redisDTO != null) {
                 caffeineCache.put(key, redisDTO);
@@ -110,6 +143,12 @@ public class ProductServiceImpl implements ProductService {
                 }
                 // Caffeine 存 ProductDTO（不含 stock/version，避免脏数据）
                 caffeineCache.put(key, productDTO);
+            } else {
+                // DB 确认不存在：写两层空值缓存（Redis 短 TTL + Caffeine 30s），挡住后续穿透请求
+                long emptyTtl = EMPTY_BASE_TTL + ThreadLocalRandom.current().nextLong(0, EMPTY_RANDOM_TTL);
+                stringRedisTemplate.opsForValue().set(emptyKey, "1", emptyTtl, TimeUnit.SECONDS);
+                caffeineCache.put(key, EMPTY_MARKER);
+                log.debug("商品不存在，写入空值缓存，商品ID: {}，TTL: {}s", id, emptyTtl);
             }
         } finally {
             if (lock.isHeldByCurrentThread()) {
@@ -117,6 +156,7 @@ public class ProductServiceImpl implements ProductService {
             }
         }
 
+        // 商品不存在时 productDTO 保持 null（EMPTY_MARKER 不赋给返回变量）
         return productDTO;
     }
 
@@ -156,6 +196,10 @@ public class ProductServiceImpl implements ProductService {
 
             // 新商品激活即时补位：把商品ID加入布隆过滤器，避免被防穿透拦截误判为"不存在"
             bloomFilterService.put(product.getId());
+
+            // 清理可能残留的空值标记（防御"先被空标记挡住、后预热上架"的时序）
+            // Caffeine 下方的 put 会自动覆盖 EMPTY_MARKER，Redis 空标记需显式删除
+            stringRedisTemplate.delete(EMPTY_KEY_PREFIX + id);
 
             // 商品信息预热到 Redis（存 ProductDTO，与 Caffeine 一致，不含库存）
             redisTemplate.opsForValue().set(key, dto);
