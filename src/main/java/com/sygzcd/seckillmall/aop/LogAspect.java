@@ -35,8 +35,9 @@ public class LogAspect {
         // 获取请求信息
         ServletRequestAttributes attributes = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
         String requestInfo = "";
+        HttpServletRequest request = null;
         if (attributes != null) {
-            HttpServletRequest request = attributes.getRequest();
+            request = attributes.getRequest();
             requestInfo = request.getMethod() + " " + request.getRequestURI();
         }
 
@@ -54,6 +55,15 @@ public class LogAspect {
             }
         } catch (Exception e) {
             args = "序列化失败";
+        }
+
+        // H-5: 密码脱敏。password 为 @RequestParam，序列化后是数组元素（如 ["admin","secret123"]），
+        // 不含 "password": 键，故必须按"值"脱敏，不能依赖 "password":"..." 这类正则。
+        if (request != null) {
+            String pwd = request.getParameter("password");
+            if (pwd != null && !pwd.isEmpty()) {
+                args = args.replace("\"" + pwd + "\"", "\"***\"");
+            }
         }
 
         log.info("接口开始: {} | 参数: {}", requestInfo, args);
