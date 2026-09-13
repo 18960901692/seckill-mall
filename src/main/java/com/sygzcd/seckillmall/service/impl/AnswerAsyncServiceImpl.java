@@ -1,5 +1,7 @@
 package com.sygzcd.seckillmall.service.impl;
 
+import com.sygzcd.seckillmall.common.BusinessException;
+import com.sygzcd.seckillmall.common.ResultCode;
 import com.sygzcd.seckillmall.entity.AnswerRecord;
 import com.sygzcd.seckillmall.mapper.AnswerRecordMapper;
 import com.sygzcd.seckillmall.service.AnswerAsyncService;
@@ -37,15 +39,41 @@ public class AnswerAsyncServiceImpl implements AnswerAsyncService {
 
     private static final String ANSWER_QUEUE_KEY = "answer:queue";
     private static final String PROCESSING_QUEUE_KEY = "answer:queue:processing";
+    /** 用户已答题目集合（Set 成员为 questionId）：首答判重，防止同一题重复提交重复加分 */
+    private static final String ANSWERED_KEY_PREFIX = "answered:";
     private static final int BATCH_SIZE = 100;
 
     @Override
     public void submitAnswerAsync(Long userId, Long questionId, boolean correct) {
-        // 写入 Redis List 异步队列（使用 StringRedisTemplate 避免序列化问题）
-        String data = userId + ":" + questionId + ":" + (correct ? 1 : 0);
-        stringRedisTemplate.opsForList().rightPush(ANSWER_QUEUE_KEY, data);
+        // 基础参数校验：学习项目无题库表，至少拦截非法 ID（服务端判题需引入题库，受项目范围约束不做）
+        if (questionId == null || questionId <= 0) {
+            throw new BusinessException(ResultCode.PARAM_ERROR);
+        }
 
-        // 异步处理：更新排行榜积分
+        // 首答原子判定：SADD 对已存在的成员返回 0，天然防并发重复提交。
+        // 必须同时挡在「入队」和「加分」两个动作之前——DB 唯一索引只能保证 answer_record 不重复，
+        // 管不到排行榜 ZINCRBY；这里让"每题只答一次"的幂等约束同时覆盖记录与积分两个副作用。
+        String answeredKey = ANSWERED_KEY_PREFIX + userId;
+        Long added = stringRedisTemplate.opsForSet().add(answeredKey, questionId.toString());
+        if (added == null || added == 0) {
+            throw new BusinessException(ResultCode.ANSWER_REPEAT);
+        }
+
+        try {
+            // 写入 Redis List 异步队列（使用 StringRedisTemplate 避免序列化问题）
+            String data = userId + ":" + questionId + ":" + (correct ? 1 : 0);
+            stringRedisTemplate.opsForList().rightPush(ANSWER_QUEUE_KEY, data);
+        } catch (RuntimeException e) {
+            // 入队失败：回滚首答标记，允许用户重试（补偿失败仅记录，不覆盖原始异常）
+            try {
+                stringRedisTemplate.opsForSet().remove(answeredKey, questionId.toString());
+            } catch (RuntimeException ex) {
+                log.error("回滚首答标记失败，用户ID: {}, 题目ID: {}", userId, questionId, ex);
+            }
+            throw e;
+        }
+
+        // 通过首答判定后才更新排行榜积分（异步，不阻塞提交请求）
         bizExecutor.execute(() -> {
             if (correct) {
                 rankService.addScore(userId, 10);

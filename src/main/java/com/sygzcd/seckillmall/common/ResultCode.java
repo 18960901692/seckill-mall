@@ -27,6 +27,8 @@ public enum ResultCode {
     // 用户业务（2xxx）
     USERNAME_EXISTS(2001, "用户名已存在"),
     LOGIN_FAIL(2002, "用户名或密码错误"),
+    // 答题业务（3xxx）
+    ANSWER_REPEAT(3001, "该题已作答，请勿重复提交"),
     BLACK_LISTED(403, "已被加入黑名单，请联系管理员");
 
     private final Integer code;
