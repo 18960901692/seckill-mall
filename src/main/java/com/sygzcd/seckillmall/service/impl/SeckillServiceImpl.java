@@ -67,7 +67,7 @@ public class SeckillServiceImpl implements SeckillService {
     public Orders seckill(Long userId, Long productId) {
         // 1. 布隆过滤器防缓存穿透
         if (!bloomFilterService.mightContain(productId)) {
-            throw new BusinessException("商品不存在");
+            throw new BusinessException(ResultCode.PRODUCT_NOT_FOUND);
         }
 
         // 2. 用户防重检查（双重保障）
@@ -76,7 +76,7 @@ public class SeckillServiceImpl implements SeckillService {
         Boolean added = stringRedisTemplate.opsForValue()
                 .setIfAbsent(userKey, "1", 1, TimeUnit.HOURS);
         if (added == null || !added) {
-            throw new BusinessException("你已经抢过了，请勿重复操作");
+            throw new BusinessException(ResultCode.REPEAT_ORDER, "你已经抢过了，请勿重复操作");
         }
 
         // 2.2 DB 兜底检查：防止 Redis TTL 过期或故障导致的重复下单
@@ -84,14 +84,14 @@ public class SeckillServiceImpl implements SeckillService {
         Orders existing = ordersMapper.selectValidOrder(userId, productId);
         if (existing != null) {
             stringRedisTemplate.delete(userKey);
-            throw new BusinessException("你已经有该商品的订单，请勿重复下单");
+            throw new BusinessException(ResultCode.REPEAT_ORDER, "你已经有该商品的订单，请勿重复下单");
         }
 
         // 3. 三级缓存查库存（快速失败）
         Integer stock = productService.getStock(productId);
         if (stock == null || stock <= 0) {
             stringRedisTemplate.delete(userKey);
-            throw new BusinessException("商品已售罄");
+            throw new BusinessException(ResultCode.STOCK_EMPTY);
         }
 
         // 4. 加锁临界区：Redis 预扣 → MySQL 事务提交
@@ -129,7 +129,7 @@ public class SeckillServiceImpl implements SeckillService {
             // 1. 分布式锁串行化（同一商品串行执行，防超卖第一层）
             locked = lock.tryLock(3, 10, TimeUnit.SECONDS);
             if (!locked) {
-                throw new BusinessException("系统繁忙，请稍后重试");
+                throw new BusinessException(ResultCode.SECKILL_BUSY);
             }
 
             // 2. Redis 预扣库存（原子操作，使用 StringRedisTemplate 保证值为纯数字字符串）
@@ -137,19 +137,19 @@ public class SeckillServiceImpl implements SeckillService {
             redisDeducted = true;
             if (remainStock == null || remainStock < 0) {
                 // 库存不足：此处不直接回补，交由 compensateRedis 统一处理，避免与 catch 中的回补重复叠加
-                throw new BusinessException("商品已售罄");
+                throw new BusinessException(ResultCode.STOCK_EMPTY);
             }
 
             // 3. MySQL 事务：扣库存 + 创建订单（事务提交是"订单生效"的唯一分界点）
             Orders order = transactionTemplate.execute(status -> {
                 Product product = productMapper.selectById(productId);
                 if (product == null) {
-                    throw new BusinessException("商品不存在");
+                    throw new BusinessException(ResultCode.PRODUCT_NOT_FOUND);
                 }
 
                 int affected = productMapper.decreaseStockWithVersion(productId, product.getVersion());
                 if (affected == 0) {
-                    throw new BusinessException("手慢了，商品已售罄");
+                    throw new BusinessException(ResultCode.STOCK_EMPTY, "手慢了，商品已售罄");
                 }
 
                 // 创建订单（Redis防重key + DB状态检查 双重保障幂等）
@@ -174,7 +174,7 @@ public class SeckillServiceImpl implements SeckillService {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             compensateRedis(stockKey, userKey, redisDeducted, committed);
-            throw new BusinessException("系统繁忙");
+            throw new BusinessException(ResultCode.SECKILL_BUSY, "系统繁忙");
         } catch (BusinessException e) {
             // 业务失败（商品不存在 / 乐观锁冲突 / 库存不足等）：回补 Redis 预扣 + 释放防重标记
             compensateRedis(stockKey, userKey, redisDeducted, committed);
@@ -186,7 +186,7 @@ public class SeckillServiceImpl implements SeckillService {
             if (e instanceof DuplicateKeyException) {
                 throw new BusinessException(ResultCode.REPEAT_ORDER);
             }
-            throw new BusinessException("秒杀失败，请稍后重试");
+            throw new BusinessException(ResultCode.SECKILL_FAIL, "秒杀失败，请稍后重试");
         } finally {
             if (locked) {
                 try {

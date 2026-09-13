@@ -133,7 +133,7 @@ public class OrderServiceImpl implements OrderService {
 
         // 3. 状态校验（给用户友好的错误提示）
         if (order.getStatus() != 0) {
-            throw new BusinessException("订单已支付或已取消");
+            throw new BusinessException(ResultCode.ORDER_ALREADY_HANDLED);
         }
 
         // 4. 生成支付流水号（UUID 保证全局唯一）
@@ -143,7 +143,7 @@ public class OrderServiceImpl implements OrderService {
         //    两个并发支付请求只有一个能更新成功
         int affected = ordersMapper.payOrder(orderNo, userId, transactionId);
         if (affected == 0) {
-            throw new BusinessException("订单状态已变更，请刷新重试");
+            throw new BusinessException(ResultCode.ORDER_STATUS_CHANGED);
         }
 
         // 6. 返回支付结果

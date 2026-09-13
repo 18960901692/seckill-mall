@@ -1,6 +1,7 @@
 package com.sygzcd.seckillmall.service.impl;
 
 import com.sygzcd.seckillmall.common.BusinessException;
+import com.sygzcd.seckillmall.common.ResultCode;
 import com.sygzcd.seckillmall.common.UserDTO;
 import com.sygzcd.seckillmall.entity.User;
 import com.sygzcd.seckillmall.mapper.UserMapper;
@@ -39,7 +40,7 @@ public class UserServiceImpl implements UserService {
     public void register(String username, String password) {
         User existingUser = userMapper.selectByUsername(username);
         if (existingUser != null) {
-            throw new BusinessException("用户名已存在");
+            throw new BusinessException(ResultCode.USERNAME_EXISTS);
         }
 
         String encodedPassword = passwordEncoder.encode(password);
@@ -50,7 +51,7 @@ public class UserServiceImpl implements UserService {
         try {
             userMapper.insert(user);
         } catch (DuplicateKeyException e) {
-            throw new BusinessException("用户名已存在");
+            throw new BusinessException(ResultCode.USERNAME_EXISTS);
         }
     }
 
@@ -58,11 +59,11 @@ public class UserServiceImpl implements UserService {
     public UserDTO login(String username, String password) {
         User user = userMapper.selectByUsername(username);
         if (user == null) {
-            throw new BusinessException("用户名或密码错误");
+            throw new BusinessException(ResultCode.LOGIN_FAIL);
         }
 
         if (!passwordEncoder.matches(password, user.getPassword())) {
-            throw new BusinessException("用户名或密码错误");
+            throw new BusinessException(ResultCode.LOGIN_FAIL);
         }
 
         // 登录成功，写入 Session（仅存 userId，避免保存密码 Hash 等敏感信息）
