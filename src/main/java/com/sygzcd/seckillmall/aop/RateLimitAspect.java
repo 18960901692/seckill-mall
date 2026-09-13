@@ -5,6 +5,7 @@ import com.sygzcd.seckillmall.common.Result;
 import com.sygzcd.seckillmall.common.ResultCode;
 import com.sygzcd.seckillmall.service.BlackListService;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
@@ -62,12 +63,18 @@ public class RateLimitAspect {
         }
         
         HttpServletRequest request = attributes.getRequest();
+        HttpServletResponse response = attributes.getResponse();
         String ip = getClientIp(request);
         String key = rateLimit.keyPrefix() + ":" + ip;
 
         // 第一层：本地 Semaphore 限流
         if (!semaphore.tryAcquire()) {
             recordViolation(request, ip);
+            // M-2：显式设置 HTTP 429 状态码（@Around 直接 return 对象默认仍是 200）。
+            // 注意：SC_TOO_MANY_REQUESTS 常量 Servlet 6.1 才有，本项目 Servlet 6.0（Tomcat 10.1）只能用字面值
+            if (response != null) {
+                response.setStatus(429);
+            }
             return Result.fail(ResultCode.RATE_LIMIT);
         }
 
@@ -86,6 +93,11 @@ public class RateLimitAspect {
 
             if (result == null || result == 0) {
                 recordViolation(request, ip);
+                // M-2：显式设置 HTTP 429 状态码，与 body 中 code=429、PRESS_TEST 断言保持一致
+                // （SC_TOO_MANY_REQUESTS 常量 Servlet 6.1 才有，当前 Servlet 6.0 用字面值）
+                if (response != null) {
+                    response.setStatus(429);
+                }
                 return Result.fail(ResultCode.RATE_LIMIT);
             }
 
