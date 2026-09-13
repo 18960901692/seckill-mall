@@ -49,7 +49,6 @@ public class OrderServiceImpl implements OrderService {
     @Autowired
     private TransactionTemplate transactionTemplate;
 
-    private static final String STOCK_KEY = "seckill:stock:";
     private static final String USER_SECKILL_KEY = "seckill:user:";
 
     @Override
@@ -62,7 +61,14 @@ public class OrderServiceImpl implements OrderService {
     /**
      * 取消订单（订单状态流转 + 释放库存）
      * 1. 事务内：取消订单状态流转（UPDATE status=2 WHERE status=0）+ 回滚 MySQL 库存
-     * 2. 事务外：回滚 Redis 库存 + 失效商品缓存 + 删除用户抢购记录
+     * 2. 事务外：失效商品缓存 + 删除用户抢购记录
+     *
+     * Redis 库存为什么不在此 INCR（H-4）：
+     * 秒杀预扣与对账校正都在 seckill:lock:{pid} 分布式锁内串行执行，若取消路径无锁 INCR，
+     * 会与 StockReconcileService 的"读 Redis→判定不一致→SET 校正"交错，造成 Redis 虚高
+     * （INCR 落在 SET 之后），60s 内可能多放一个请求进 DB。正向库存校正统一收敛到对账任务
+     * 单一职责：取消后 Redis 短暂少 1（保守方向，只可能少卖），由 StockReconcileService
+     * 每 60s 以 MySQL 为准 SET 校正恢复，彻底消除无锁写者破坏锁不变量。
      */
     @Override
     public void cancelOrder(String orderNo) {
@@ -97,9 +103,8 @@ public class OrderServiceImpl implements OrderService {
 
         // 事务提交后执行以下操作（若事务回滚则不会执行）
         if (cancelled[0]) {
-            // 回滚 Redis 库存（使用 StringRedisTemplate 保证值为纯数字字符串）
-            String stockKey = STOCK_KEY + productId;
-            stringRedisTemplate.opsForValue().increment(stockKey);
+            // 注意：此处不再直接 INCR Redis 库存。Redis 库存校正统一由 StockReconcileService
+            // 每 60s 持 seckill:lock 双检后以 MySQL 为准 SET，避免无锁 INCR 与对账竞态导致虚高（H-4）。
 
             // 失效商品缓存（Caffeine + Redis + 广播通知其他实例）
             productService.invalidateCache(productId);
