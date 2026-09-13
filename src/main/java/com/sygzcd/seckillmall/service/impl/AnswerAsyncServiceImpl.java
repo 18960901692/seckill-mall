@@ -6,7 +6,6 @@ import com.sygzcd.seckillmall.service.AnswerAsyncService;
 import com.sygzcd.seckillmall.service.RankService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.dao.DuplicateKeyException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -103,14 +102,9 @@ public class AnswerAsyncServiceImpl implements AnswerAsyncService {
                 stringRedisTemplate.opsForList().remove(PROCESSING_QUEUE_KEY, 1, data);
             }
             log.info("处理队列恢复 {} 条答题记录", records.size());
-        } catch (DuplicateKeyException e) {
-            // 唯一索引冲突：数据已存在（幂等安全），逐条清理本批次，绝不整体清空队列，避免误删其他正常数据
-            log.warn("处理队列数据重复，逐条清理（唯一索引幂等）", e);
-            for (String data : rawData) {
-                stringRedisTemplate.opsForList().remove(PROCESSING_QUEUE_KEY, 1, data);
-            }
         } catch (Exception e) {
-            // 恢复失败，数据留在处理队列，下次定时任务继续重试
+            // M-5：insertBatch 用 ON DUPLICATE KEY UPDATE 幂等忽略，不会抛 DuplicateKeyException，
+            // 故无需单独 catch；其余异常（DB 不可用等）下数据留在处理队列，下次定时任务继续重试
             log.error("处理队列恢复失败，{} 条记录等待下次重试", records.size(), e);
         }
     }
@@ -131,12 +125,19 @@ public class AnswerAsyncServiceImpl implements AnswerAsyncService {
                 break;
             }
             rawData.add(data);
-            String[] parts = data.split(":");
-            AnswerRecord record = new AnswerRecord();
-            record.setUserId(Long.parseLong(parts[0]));
-            record.setQuestionId(Long.parseLong(parts[1]));
-            record.setCorrect(Integer.parseInt(parts[2]));
-            records.add(record);
+            // M-5：与 recoverProcessingQueue/parseRecords 保持同一容错口径，
+            // 单条脏数据只清理自身（它已被 RPOPLPUSH 移到 processing 队列），不能让整轮定时任务中断
+            try {
+                String[] parts = data.split(":");
+                AnswerRecord record = new AnswerRecord();
+                record.setUserId(Long.parseLong(parts[0]));
+                record.setQuestionId(Long.parseLong(parts[1]));
+                record.setCorrect(Integer.parseInt(parts[2]));
+                records.add(record);
+            } catch (Exception parseEx) {
+                stringRedisTemplate.opsForList().remove(PROCESSING_QUEUE_KEY, 1, data);
+                log.warn("解析答题记录失败，跳过并从处理队列清理: {}", data, parseEx);
+            }
         }
 
         if (records.isEmpty()) {
@@ -150,14 +151,9 @@ public class AnswerAsyncServiceImpl implements AnswerAsyncService {
                 stringRedisTemplate.opsForList().remove(PROCESSING_QUEUE_KEY, 1, data);
             }
             log.info("批量落库 {} 条答题记录", records.size());
-        } catch (DuplicateKeyException e) {
-            // 唯一索引冲突：数据已存在（重复消费/重答，幂等安全），逐条清理本批次，绝不整体清空队列
-            log.warn("主队列数据重复，逐条清理处理队列（唯一索引幂等）", e);
-            for (String data : rawData) {
-                stringRedisTemplate.opsForList().remove(PROCESSING_QUEUE_KEY, 1, data);
-            }
         } catch (Exception e) {
-            // 落库失败，数据留在处理队列，下次定时任务通过 recoverProcessingQueue 恢复
+            // M-5：ON DUPLICATE KEY UPDATE 已幂等忽略重复，不会抛 DuplicateKeyException；
+            // 其余异常（DB 不可用等）下数据留在处理队列，下次定时任务通过 recoverProcessingQueue 恢复
             log.error("批量落库失败，{} 条记录留在处理队列等待补偿", records.size(), e);
         }
     }
