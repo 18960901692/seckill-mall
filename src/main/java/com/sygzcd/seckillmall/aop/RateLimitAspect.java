@@ -3,6 +3,7 @@ package com.sygzcd.seckillmall.aop;
 import com.sygzcd.seckillmall.aop.annotation.RateLimit;
 import com.sygzcd.seckillmall.common.Result;
 import com.sygzcd.seckillmall.common.ResultCode;
+import com.sygzcd.seckillmall.common.util.IpUtils;
 import com.sygzcd.seckillmall.service.BlackListService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -39,6 +40,9 @@ public class RateLimitAspect {
     @Autowired
     private BlackListService blackListService;
 
+    @Autowired
+    private IpUtils ipUtils;
+
     // 本地信号量：单机限流 10000 并发（本地快速降级，主要限流依赖 Redis 分布式限流）
     private final Semaphore semaphore = new Semaphore(10000);
 
@@ -64,7 +68,7 @@ public class RateLimitAspect {
         
         HttpServletRequest request = attributes.getRequest();
         HttpServletResponse response = attributes.getResponse();
-        String ip = getClientIp(request);
+        String ip = ipUtils.getClientIp(request);
         String key = rateLimit.keyPrefix() + ":" + ip;
 
         // 第一层：本地 Semaphore 限流
@@ -121,22 +125,5 @@ public class RateLimitAspect {
         if (session != null && session.getAttribute("userId") != null) {
             blackListService.recordViolation("user", session.getAttribute("userId").toString());
         }
-    }
-
-    /**
-     * 获取客户端真实 IP，处理代理穿透
-     */
-    private String getClientIp(HttpServletRequest request) {
-        String ip = request.getHeader("X-Forwarded-For");
-        if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
-            ip = request.getHeader("X-Real-IP");
-        }
-        if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
-            ip = request.getRemoteAddr();
-        }
-        if (ip != null && ip.contains(",")) {
-            ip = ip.split(",")[0].trim();
-        }
-        return ip;
     }
 }

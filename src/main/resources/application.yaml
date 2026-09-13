@@ -78,6 +78,14 @@ knife4j:
 server:
   port: 8080
 
+# 应用安全配置
+app:
+  security:
+    # 可信代理名单：只有 TCP 直连方（remoteAddr）在此名单内，才解析 X-Forwarded-For/X-Real-IP
+    # 支持单 IP 与 CIDR（如 172.18.0.0/16），逗号分隔；留空表示不信任任何转发头，只认 TCP 层地址
+    # 本机开发配回环地址（Windows 访问 localhost 可能解析为 IPv6 ::1，故两者都配）
+    trusted-proxies: 127.0.0.1,::1
+
 logging:
   level:
     com.sygzcd.seckillmall: info

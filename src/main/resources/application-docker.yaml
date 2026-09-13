@@ -78,6 +78,14 @@ knife4j:
 server:
   port: 8080
 
+# 应用安全配置
+app:
+  security:
+    # 容器部署默认留空（fail-closed）：若前面有 Nginx，其经 docker 网桥转发时 remoteAddr
+    # 通常是 172.x 网桥地址（容器重建可能漂移，建议配 CIDR，如 172.16.0.0/12），
+    # 必须按实际网络显式配置后转发头才会被采信
+    trusted-proxies:
+
 logging:
   level:
     com.sygzcd.seckillmall: info

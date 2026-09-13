@@ -3,6 +3,7 @@ package com.sygzcd.seckillmall.interceptor;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sygzcd.seckillmall.common.Result;
 import com.sygzcd.seckillmall.common.ResultCode;
+import com.sygzcd.seckillmall.common.util.IpUtils;
 import com.sygzcd.seckillmall.service.BlackListService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -23,12 +24,15 @@ public class BlackListInterceptor implements HandlerInterceptor {
     @Autowired
     private BlackListService blackListService;
 
+    @Autowired
+    private IpUtils ipUtils;
+
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
         // 1. 检查 IP 黑名单
-        String ip = getClientIp(request);
+        String ip = ipUtils.getClientIp(request);
         if (blackListService.isBlackListed("ip", ip)) {
             log.warn("IP 黑名单拦截：ip={}, uri={}", ip, request.getRequestURI());
             response.setStatus(HttpServletResponse.SC_FORBIDDEN);
@@ -55,23 +59,5 @@ public class BlackListInterceptor implements HandlerInterceptor {
         }
 
         return true;
-    }
-
-    /**
-     * 获取客户端真实 IP，处理代理穿透
-     */
-    private String getClientIp(HttpServletRequest request) {
-        String ip = request.getHeader("X-Forwarded-For");
-        if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
-            ip = request.getHeader("X-Real-IP");
-        }
-        if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
-            ip = request.getRemoteAddr();
-        }
-        // 多级代理时取第一个
-        if (ip != null && ip.contains(",")) {
-            ip = ip.split(",")[0].trim();
-        }
-        return ip;
     }
 }
