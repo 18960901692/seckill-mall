@@ -81,11 +81,6 @@ public class AnswerAsyncServiceImpl implements AnswerAsyncService {
         });
     }
 
-    @Override
-    public void batchSaveToDb() {
-        // 定时任务每 5 秒自动触发，无需手动调用
-    }
-
     /**
      * 定时批量落库答题记录
      * 每 5 秒自动执行一次，单次最多处理 100 条

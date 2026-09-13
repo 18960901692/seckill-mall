@@ -518,8 +518,7 @@ curl -s -b cookie.txt "$BASE/api/rank/top?n=10"
 | 订单 | GET | `/api/order/my` | `page`, `size` | 登录 | 我的订单（分页） |
 | 排行榜 | GET | `/api/rank/top` | `n`（默认 10） | 登录 | Top N 排行榜 |
 | 排行榜 | GET | `/api/rank/my` | - | 登录 | 我的排名与积分 |
-| 答题 | POST | `/api/answer/submit` | `questionId`, `correct` | 登录 | 提交答题（异步入队） |
-| 答题 | POST | `/api/answer/batch-save` | - | 登录 | 手动触发批量落库 |
+| 答题 | POST | `/api/answer/submit` | `questionId`, `correct` | 登录 | 提交答题（异步入队，定时每 5 秒批量落库） |
 | 黑名单 | GET | `/api/blacklist/check` | `type`, `key` | 登录 | 检查是否在黑名单 |
 | 黑名单 | GET | `/api/blacklist/list` | `type` | 登录 | 查看黑名单列表 |
 | 黑名单 | POST | `/api/blacklist/add` | `type`, `key` | **管理员** | 手动加入黑名单 |

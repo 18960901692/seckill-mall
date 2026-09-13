@@ -32,11 +32,4 @@ public class AnswerController {
         answerAsyncService.submitAnswerAsync(user.getId(), questionId, correct);
         return Result.success();
     }
-
-    @Operation(summary = "批量落库答题记录")
-    @PostMapping("/batch-save")
-    public Result<Void> batchSave() {
-        answerAsyncService.batchSaveToDb();
-        return Result.success();
-    }
 }
