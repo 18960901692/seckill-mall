@@ -47,7 +47,7 @@
 | 库存泄漏（少卖） | 用户下单未支付，库存被永久占用 | RabbitMQ 延时消息 + 重试补偿 + DB 全局对账，**三层安全网** |
 | 打垮 DB | 流量直接穿透到 MySQL，数据库被打挂 | 布隆过滤器 + 三级缓存 + 滑动窗口限流 + 自动黑名单 |
 
-项目同时包含**用户 / 商品 / 秒杀 / 订单 / 排行榜 / 答题 / 黑名单**七个业务模块，覆盖缓存、锁、MQ、限流、异步落库、对账等后端高频考点，代码量约 **4100 行**（65 个 Java 类 + 4 个 Mapper XML），适合作为后端面试的项目实战素材。
+项目同时包含**用户 / 商品 / 秒杀 / 订单 / 排行榜 / 答题 / 黑名单 / 管理员**八个业务模块，覆盖缓存、锁、MQ、限流、异步落库、对账等后端高频考点，代码量约 **4500 行**（68 个 Java 类 + 4 个 Mapper XML），适合作为后端面试的项目实战素材。
 
 ---
 
@@ -182,7 +182,7 @@
                ▼
         ┌─────────────┐
         │ 2 已取消     │ ──▶ 事务内 WHERE status=0 条件更新，保证幂等
-        └─────────────┘     并 INCR 回滚 Redis 库存
+        └─────────────┘     仅回滚 MySQL 库存，Redis 由对账每 60s 以 MySQL 为准 SET 校正
 ```
 
 - 状态流转统一使用**条件更新**（`WHERE status=0`），并发下天然幂等
@@ -199,24 +199,29 @@
 
 ### 4.6 库存对账（最终兜底）
 
-- **定时对账**：每 60 秒从 MySQL 查询商品库存，与 Redis 对比
-- **分布式锁保护**：复用秒杀同一把锁 `seckill:lock:{productId}`，加锁后**双检确认**再校正
-- **以 DB 为准**：Redis 与 MySQL 不一致时以 MySQL 为准校正 Redis 库存
+- **定时对账**：每 60 秒批量查询商品库存，与 Redis 对比
+- **分布式锁保护**：复用秒杀同一把锁 `seckill:lock:{productId}`，确保与秒杀/对账的 Redis 操作串行
+- **锁内重查 MySQL**：循环外快照只负责遍历，真正校正前**锁内重查 `selectById`** 拿新鲜值，避免"循环外读 MySQL + 锁内只用 Redis 双检"导致用旧值 SET 覆盖秒杀刚提交的正确值（详见 INTERVIEW_QUESTIONS 第 58 题）
+- **以 DB 为准**：Redis 与 MySQL 不一致时以锁内查到的新鲜 MySQL 值校正 Redis 库存
 - **三层兜底体系定位**：代码异常补偿（JVM 正常）→ MQ/Redis 补偿队列（临时故障）→ 库存/订单对账（JVM 宕机、断电等代码补偿无法覆盖的极端场景）
 
 ### 4.7 消息可靠性
 
 - **RabbitMQ 延时队列**：`DirectExchange` + `x-message-ttl=1800000`(30min) + `x-dead-letter-exchange` 实现延时消息
-- **三板斧**：`publisher-confirm-type: correlated` 确认 + 队列/消息持久化 + `acknowledge-mode: manual` 手动 ACK
+- **发送端同步确认**：`OrderDelayProducer` 用 `publisher-confirm-type: correlated`，发送时携带 `CorrelationData` + `Future.get(3s)` 同步等 Broker 确认；同时校验 `Returned` 路由退回，NACK/路由失败/超时统一抛异常流入 Redis 补偿队列
+- **三板斧**：队列/消息持久化 + `acknowledge-mode: manual` 手动 ACK
 - **消费幂等**：`WHERE status=0` 条件更新，已支付/已取消订单直接跳过
+- **补偿队列自身防丢**：`seckill:dead:retry` 用 `RPOPLPUSH` 原子迁移至 processing，重投成功才删除；应用宕机残留由下轮 `recoverProcessing` 恢复
 
 ### 4.8 黑名单与安全
 
 - **自动限流拉黑**：10 分钟窗口内违规 5 次自动加入黑名单（Redis Set），后续请求直接 403
-- **三级拦截器**：黑名单拦截器（`order=0`）→ 登录拦截器（`order=1`）→ 管理员拦截器（`order=2`，仅 `@RequireAdmin` 接口）
+- **IP 可信代理边界**：`IpUtils` 先以 TCP 层 `remoteAddr` 判断是否属于配置的可信代理（CIDR 支持），不可信直连一律不采信 XFF/X-Real-IP，杜绝伪造 IP 绕过限流或嫁祸拉黑
+- **三级拦截器**：黑名单拦截器（`order=0`）→ 登录拦截器（`order=1`）→ 管理员拦截器（`order=2`，路径 `/api/admin/**` + `/api/blacklist/**`，需 `@RequireAdmin` 注解）
 - **黑白名单管理 API**：支持查看、手动加入、移除黑名单
-- **BCrypt 密码加密**；登录态存 Redis Session，多实例共享
+- **BCrypt 密码加密**；登录态存 Redis Session，多实例共享；login 时显式清除非 admin 账号的 `isAdmin` 标志位，防止残留越权
 - **数据脱敏**：所有接口返回 `UserDTO`，不暴露 password
+- **敏感配置抽离**：DB/Rabbit 密码等通过环境变量注入或 `.env` 文件读取，`application.yaml` 不再硬编码明文默认值
 
 ### 4.9 布隆过滤器
 
@@ -230,6 +235,7 @@
 - **异步批量落库**：Redis List 收集答题记录，每 5 秒定时批量写入 DB（`bizExecutor` 线程池）
 - **幂等写入**：`uk_user_question` 唯一索引 + `ON DUPLICATE KEY UPDATE`，同一用户同一题目不重复记录
 - **可靠队列**：`RPOPLPUSH` 原子转移至 `answer:processing` 处理队列，落库成功后再删除；启动时恢复残留消息
+- **答题防重（首答判重）**：入队前 `SADD answered:{userId} {questionId}`，已答过直接返回 3001；首答判定同时覆盖记录与积分两个副作用，杜绝"同一题刷 1000 次 = +10000 分"的漏洞
 - **积分排行榜**：答题正确得 10 分，写入 Redis ZSet（`rank:score`），支持 Top N 与个人排名
 
 ---
@@ -248,11 +254,12 @@ seckill-mall
 │   │   └── LogAspect.java               # 请求日志切面
 │   ├── common/                          # Result / ResultCode / BusinessException
 │   │   ├── Result.java                  # 统一返回体 {code, message, data}
-│   │   ├── ResultCode.java              # 200/401/403/429/1001 业务码
+│   │   ├── ResultCode.java              # 完整业务码（200/4xx/5xx + 10xx/20xx/30xx）
 │   │   ├── GlobalExceptionHandler.java  # 全局异常处理
 │   │   ├── ProductDTO.java              # 商品缓存对象（不含 stock/version）
 │   │   ├── UserDTO.java                 # 用户脱敏对象（不含 password）
-│   │   └── PayResultDTO.java            # 支付结果
+│   │   ├── PayResultDTO.java            # 支付结果
+│   │   └── util/IpUtils.java            # IP 可信代理边界（CIDR 支持 + fail-closed）
 │   ├── config/
 │   │   ├── CaffeineConfig.java          # 本地缓存（Caffeine）
 │   │   ├── CacheInvalidateConfig.java   # Pub/Sub 缓存失效订阅
@@ -265,28 +272,32 @@ seckill-mall
 │   │   ├── Knife4jConfig.java           # OpenAPI3 文档
 │   │   ├── StockWarmUpRunner.java       # 启动预热 Redis 商品库存
 │   │   └── WebMvcConfig.java            # 三级拦截器注册
-│   ├── controller/                      # 8 个 Controller，21 个接口
+│   ├── controller/                      # 9 个 Controller，22 个接口
+│   │   ├── AdminProductController.java      # 管理员商品属性更新（唯一真实触发 invalidateCache 的入口）
+│   │   ├── UserController / ProductController / SeckillController
+│   │   ├── OrderController / RankController / AnswerController
+│   │   ├── BlackListController / TestController
 │   ├── entity/                          # Product / Orders / User / AnswerRecord
 │   ├── interceptor/                     # BlackList / Auth / Admin 拦截器
 │   ├── mapper/                          # 4 个 Mapper 接口
 │   └── service/
 │       ├── impl/
 │       │   ├── SeckillServiceImpl.java      # ★ 秒杀核心链路
-│       │   ├── OrderServiceImpl.java        # 订单状态机
-│       │   ├── ProductServiceImpl.java      # 三级缓存
+│       │   ├── OrderServiceImpl.java        # 订单状态机（不再 INCR Redis 库存）
+│       │   ├── ProductServiceImpl.java      # 三级缓存 + getStock 懒加载回填
+│       │   ├── UserServiceImpl.java         # 登录/注册（login 显式清除 isAdmin）
 │       │   ├── UserCacheService.java        # 用户三级缓存
 │       │   ├── BloomFilterServiceImpl.java  # 布隆过滤器（预热/刷新/补位）
-│       │   ├── StockReconcileService.java   # 库存对账（60s）
-│       │   ├── AnswerAsyncServiceImpl.java  # 答题异步落库（5s）
+│       │   ├── StockReconcileService.java   # 库存对账（60s，锁内重查 MySQL）
+│       │   ├── OrderReconcileService.java   # 订单全局对账（60s，终极兜底）
+│       │   ├── AnswerAsyncServiceImpl.java  # 答题异步落库 + SADD 首答判重
 │       │   ├── RankServiceImpl.java         # ZSet 排行榜
 │       │   └── BlackListServiceImpl.java    # 黑名单/违规计数
 │       ├── mq/
-│       │   ├── OrderDelayProducer.java      # 发延时消息（失败入重试队列）
-│       │   ├── OrderCancelConsumer.java     # 消费取消订单（手动 ACK）
+│       │   ├── OrderDelayProducer.java      # 发延时消息（同步 Confirm + Return 校验）
+│       │   ├── OrderCancelConsumer.java     # 消费取消订单（失败先落 Redis 再 ACK）
 │       │   ├── DelayRetryService.java       # 延时消息重试（30s / 5min 死信）
-│       │   └── DeadLetterRetryService.java  # 死信补偿重投（60s）
-│       └── reconcile/
-│           └── OrderReconcileService.java   # 订单全局对账（60s，终极兜底）
+│       │   └── DeadLetterRetryService.java  # 死信补偿重投（60s，RPOPLPUSH 保护）
 ├── src/main/resources
 │   ├── application.yaml                 # 本地环境配置
 │   ├── application-docker.yaml          # Docker 环境配置（服务名寻址）
@@ -296,7 +307,8 @@ seckill-mall
 ├── 文档/                                 # 配套学习文档（本地资料）
 ├── Dockerfile                           # 多阶段构建（Maven → JRE Alpine，非 root）
 ├── docker-compose.yml                   # MySQL + Redis + RabbitMQ + App 编排
-└── .env                                 # 环境变量（不入库）
+├── .env.example                         # 环境变量占位模板
+└── .env                                 # 真实环境变量（不入库）
 ```
 
 ---
@@ -438,17 +450,19 @@ curl -s -b cookie.txt "$BASE/api/rank/top?n=10"
 
 ### 7.1 环境变量
 
-所有敏感配置均通过环境变量注入（**不硬编码在 yml 中**），Docker 部署时由 `.env` 提供：
+所有敏感配置均通过环境变量或 `.env` 文件注入（**不硬编码在 yml 中**）。本地开发建议新建 `.env`（gitignore 已覆盖），Docker 部署由 compose 读取：
 
 | 变量名 | 说明 | 默认/示例值 |
 |--------|------|-------------|
 | `MYSQL_USERNAME` | MySQL 用户名 | `root` |
-| `MYSQL_PASSWORD` | MySQL 密码（本地 profile 用） | `18765105` |
-| `MYSQL_ROOT_PASSWORD` | MySQL root 密码（Docker profile 用） | `18765105` |
+| `MYSQL_ROOT_PASSWORD` | MySQL root 密码 | `change_me`（本地 profile 用） |
+| `MYSQL_DATABASE` | MySQL 数据库名 | `seckill_mall` |
 | `RABBITMQ_USERNAME` | RabbitMQ 用户名 | `admin` |
-| `RABBITMQ_PASSWORD` | RabbitMQ 密码 | `admin123` |
+| `RABBITMQ_PASSWORD` | RabbitMQ 密码 | `change_me` |
 | `SPRING_PROFILES_ACTIVE` | 激活配置，Docker 下为 `docker` | `docker` |
 | `JAVA_OPTS` | JVM 参数 | `-Xms256m -Xmx512m` |
+
+> 本地 profile 中 `MYSQL_USERNAME` 保留默认值 `root`（用户名不算敏感），密码、Rabbit 账号密码都不带默认值；若未设置，应用启动会报连接失败——这是**有意的 fail-closed**。
 
 ### 7.2 两套 Profile 的差异
 
@@ -457,9 +471,10 @@ curl -s -b cookie.txt "$BASE/api/rank/top?n=10"
 | MySQL 地址 | `localhost:3307` | `mysql:3306`（容器服务名） |
 | Redis 地址 | `localhost:6379` | `redis:6379` |
 | RabbitMQ 地址 | `localhost:5672` | `rabbitmq:5672` |
-| 密码来源 | `${MYSQL_PASSWORD:...}` 带默认值 | `${MYSQL_ROOT_PASSWORD:}` 强制外部注入 |
+| 密码来源 | `${MYSQL_ROOT_PASSWORD:}` 无默认值 | `${MYSQL_ROOT_PASSWORD:}` 无默认值 |
+| 可信代理 | `127.0.0.1,::1`（本机） | 空（按需配置容器网桥网段） |
 
-> 容器间通过 **Docker 网络的服务名**互相寻址，因此 Docker profile 中不能写 `localhost`（那会指向容器自身）。
+> 容器间通过 **Docker 网络的服务名**互相寻址，因此 Docker profile 中不能写 `localhost`（那会指向容器自身）。`app.security.trusted-proxies` 默认留空（fail-closed），需按部署时 Nginx 所在网段手动配置（如 `172.16.0.0/12`）。
 
 ### 7.3 关键配置项
 
@@ -491,12 +506,18 @@ curl -s -b cookie.txt "$BASE/api/rank/top?n=10"
 
 | code | 含义 | code | 含义 |
 |------|------|------|------|
-| 200 | 成功 | 429 | 请求过于频繁（触发限流） |
+| 200 | 成功 | 429 | 请求过于频繁（触发限流，真实 HTTP 429） |
 | 400 | 参数错误 | 1001 | 秒杀失败 |
-| 401 | 未登录 | 1002 | 库存不足 |
-| 403 | 无权限 / 已被拉黑 | 1003 | 重复下单 |
-| 404 | 资源不存在 | 1004 | 订单超时 |
-| 500 | 服务器内部错误 | - | - |
+| 401 | 未登录（真实 HTTP 401） | 1002 | 商品已售罄 |
+| 403 | 无权限 / 已被拉黑（真实 HTTP 403） | 1003 | 重复下单 |
+| 404 | 资源不存在 | 1005 | 系统繁忙（锁竞争） |
+| 500 | 服务器内部错误 | 1010 | 订单已支付或已取消 |
+| - | - | 1011 | 订单状态已变更，请刷新重试 |
+| - | - | 2001 | 用户名已存在 |
+| - | - | 2002 | 用户名或密码错误 |
+| - | - | 3001 | 该题已作答，请勿重复提交 |
+
+> 业务异常走 body code（HTTP 统一 200），拦截器返回的认证/授权/限流异常走真实 HTTP 状态码（401/403/429），便于压测脚本按 HTTP 状态断言。
 
 ### 8.3 接口清单
 
@@ -511,14 +532,15 @@ curl -s -b cookie.txt "$BASE/api/rank/top?n=10"
 | 商品 | GET | `/api/product/{id}` | - | 登录 | 商品详情（三级缓存） |
 | 商品 | GET | `/api/product/{id}/stock` | - | 登录 | 实时库存（Redis 计数器） |
 | 商品 | POST | `/api/product/{id}/warmup` | - | 登录 | 手动预热商品 + 库存到 Redis |
-| 秒杀 | POST | `/api/seckill/{productId}` | - | 登录 | **秒杀下单**，限流 10000 次/秒 |
+| 秒杀 | POST | `/api/seckill/{productId}` | - | 登录 | **秒杀下单**，限流 10000 次/秒（真实 HTTP 429） |
 | 订单 | GET | `/api/order/{orderNo}` | - | 登录 | 查询订单详情（仅本人） |
-| 订单 | POST | `/api/order/{orderNo}/cancel` | - | 登录 | 取消未支付订单，释放库存 |
+| 订单 | POST | `/api/order/{orderNo}/cancel` | - | 登录 | 取消未支付订单（仅回滚 MySQL，Redis 由对账校正） |
 | 订单 | POST | `/api/order/{orderNo}/pay` | - | 登录 | 模拟支付，状态 0 → 1 |
 | 订单 | GET | `/api/order/my` | `page`, `size` | 登录 | 我的订单（分页） |
 | 排行榜 | GET | `/api/rank/top` | `n`（默认 10） | 登录 | Top N 排行榜 |
 | 排行榜 | GET | `/api/rank/my` | - | 登录 | 我的排名与积分 |
-| 答题 | POST | `/api/answer/submit` | `questionId`, `correct` | 登录 | 提交答题（异步入队，定时每 5 秒批量落库） |
+| 答题 | POST | `/api/answer/submit` | `questionId`, `correct` | 登录 | 提交答题（**首答判重**：SADD `answered:{userId}`，同一题二次提交返回 3001；异步入队，定时每 5 秒批量落库） |
+| 商品管理 | POST | `/api/admin/product/{id}/update` | `name`（≤128）, `price`（0.01~99999999.99，≤2 位小数）, `hot`（0/1） | **管理员** | 修改商品属性（唯一真实触发 `invalidateCache` 的入口） |
 | 黑名单 | GET | `/api/blacklist/check` | `type`, `key` | 登录 | 检查是否在黑名单 |
 | 黑名单 | GET | `/api/blacklist/list` | `type` | 登录 | 查看黑名单列表 |
 | 黑名单 | POST | `/api/blacklist/add` | `type`, `key` | **管理员** | 手动加入黑名单 |
@@ -567,7 +589,7 @@ curl -s -b cookie.txt "$BASE/api/rank/top?n=10"
 
 > **执行顺序**：`HandlerInterceptor` 的 `preHandle` 一定**先于** `@RateLimit` 切面执行——`DispatcherServlet` 是"先 `applyPreHandle`，再调用 handler（即被 AOP 代理的 Controller 方法）"。所以恶意请求会在进入限流逻辑之前就被黑名单挡掉，这也是把黑名单拦截器的 `order` 设为 0 的原因。
 
-> **关键细节**：锁的释放必须在**事务提交之后**。早期实现用 `@Transactional` + `finally { lock.unlock() }`，会出现"锁已释放但事务尚未提交"的窗口，导致并发下读到旧库存而超卖。现改为 `TransactionTemplate` 编程式事务，提交后再解锁，并用 `decremented` 标志位记录"Redis 是否真的扣过"（该标志位目前仅覆盖 `InterruptedException` 分支，仍有一处外层 `catch` 待收口，见 [设计亮点 2](#2-补偿逻辑绑定未提交而不是发生异常)）。
+> **关键细节**：锁的释放必须在**事务提交之后**。现改为 `TransactionTemplate` 编程式事务，提交后再解锁。补偿逻辑严格绑定"Redis 确实扣过（`redisDeducted`）且订单未提交（`committed=false`）"两个标志位，**afterCommit（发延时消息）已移出锁临界区外的 try**，其异常不会触发库存回补，防止给已成交订单虚增库存。
 
 ---
 
@@ -608,6 +630,7 @@ curl -s -b cookie.txt "$BASE/api/rank/top?n=10"
 | `rank:score` | ZSet | - | 积分排行榜，score 为积分，member 为 userId |
 | `answer:queue` | List | - | 答题记录主队列（`RPOPLPUSH` → 处理队列） |
 | `answer:queue:processing` | List | - | 答题记录处理中队列（落库成功后才删除） |
+| `answered:{userId}` | Set | - | 用户已答过的 questionId（**首答判重**，防无限刷分） |
 | `ratelimit:ip:{ip}` | ZSet | windowSec | 通用限流滑动窗口 |
 | `ratelimit:seckill:{ip}` | ZSet | 1s | 秒杀接口限流（10000 次/秒） |
 | `ratelimit:test:{ip}` | ZSet | 10s | 测试接口限流（5 次/10s） |
@@ -631,7 +654,7 @@ curl -s -b cookie.txt "$BASE/api/rank/top?n=10"
 | 任务 | 实现类 | 周期 | 作用 |
 |------|--------|------|------|
 | 布隆过滤器全量刷新 | `BloomFilterServiceImpl` | 5 min | 从 DB 重建并**原子替换**实例 |
-| 库存对账 | `StockReconcileService` | 60 s | 以 MySQL 校正 Redis 库存（加锁 + 双检） |
+| 库存对账 | `StockReconcileService` | 60 s | 以 MySQL 校正 Redis 库存（复用秒杀同一把锁 + **锁内重查 MySQL** 拿新鲜值） |
 | 订单全局对账 | `OrderReconcileService` | 60 s | 扫 `status=0` 超时订单兜底取消，单批 100 |
 | 答题异步落库 | `AnswerAsyncServiceImpl` | 5 s | Redis List → DB 批量写入 |
 | 延时消息重试 | `DelayRetryService` | 30 s | 重发失败延时消息，单批 50，超 5 次转死信 |
@@ -738,13 +761,13 @@ curl -s -b cookie.txt "$BASE/api/rank/top?n=10"
 
 > **补偿的触发条件应该是"我知道业务没成功"，而不是"我看见抛异常了"。**
 
-如果按后者写，就可能回补一笔**其实已经提交成功**的订单库存，导致库存虚增（即少卖）。本项目用两个手段约束这件事：
+如果按后者写，就可能回补一笔**其实已经提交成功**的订单库存，导致库存虚增（即少卖）。本项目用三个手段约束这件事：
 
-- **编程式事务**（`TransactionTemplate`）把"提交"作为临界区内的最后一步，提交后才解锁、才发延时消息；
-- **`decremented` 标志位**记录"Redis 是否真的扣过"，在 `InterruptedException` 等防御性分支里只有扣过才回补。
+- **编程式事务**（`TransactionTemplate`）把"提交"作为临界区内的最后一步；
+- **`redisDeducted` + `committed` 双标志位**：只有「Redis 确实扣过」且「事务未提交」时才 `INCR` + 删防重 key；
+- **afterCommit（发延时消息）已移出 `try` 块**：其异常独立处理（写 Redis 补偿队列），绝不触发库存回补。
 
-> ⚠️ **待收口的一处（自查）**：最外层 `catch (Exception e)` 目前仍是**无条件**回补库存（`SeckillServiceImpl` 约 181 行），而它的 `try` 范围包含了**事务提交之后**的 `invalidateCache` 与发送延时消息两步。若这两步抛出非 `BusinessException` 的异常，就会回补一笔已提交订单的库存 → 库存虚增。
-> 建议修法：把"提交之后"的代码移出 `try`，或引入 `committed` 标志位，让补偿严格绑定"未提交"而非"发生异常"。
+全部分支（`InterruptedException` / `BusinessException` / `Exception`）统一走 `compensateRedis(...)`，补偿判定完全由两个标志位决定，彻底消除了"给已提交订单虚增库存"的可能。
 
 ### 3. 三级缓存语义统一
 
@@ -839,7 +862,7 @@ UPDATE user SET password = '<新生成的 BCrypt 哈希>' WHERE username = 'admi
 | 文档 | 内容 | 适合谁 |
 |------|------|--------|
 | `文档/LEARNING_GUIDE.md` | 新手完全学习手册，逐章讲原理 + 代码走读，含三轮学习法 | 第一次接触秒杀/Redis 的同学 |
-| `文档/INTERVIEW_QUESTIONS.md` | **24 个开发踩坑与面试要点**（锁与事务顺序、幂等三层设计、序列化坑等） | 准备面试、想深挖细节 |
+| `文档/INTERVIEW_QUESTIONS.md` | **59 个开发踩坑与面试要点**（锁与事务顺序、幂等三层设计、序列化坑、库存对账锁内重查等） | 准备面试、想深挖细节 |
 | `文档/Docker部署文档.md` | Docker 部署全流程 + 面试考法 | 想搞懂容器化部署 |
 | `文档/PRESS_TEST.md` | JMeter 压测详细指南（四场景 + 监控命令） | 想亲自压一把 |
 | `jmeter_test/` | 压测脚本 `Seckill压测.jmx` + 用户/会话数据集 | 直接开压 |
