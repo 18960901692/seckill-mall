@@ -57,9 +57,9 @@ public class WebMvcConfig implements WebMvcConfigurer {
                 .order(1);
 
         // 管理员权限拦截器：在登录拦截器之后执行
-        // 仅拦截黑名单管理接口中的敏感操作（通过 @RequireAdmin 注解标记）
+        // 对路径下的接口通过 @RequireAdmin 注解标记管理员敏感操作
         registry.addInterceptor(adminInterceptor)
-                .addPathPatterns("/api/blacklist/**")
+                .addPathPatterns("/api/blacklist/**", "/api/admin/**")
                 .order(2);
     }
 }

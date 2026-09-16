@@ -70,8 +70,11 @@ public class UserServiceImpl implements UserService {
         session.setAttribute("userId", user.getId());
 
         // 管理员标志：用户名为 admin 的用户拥有管理员权限
+        // 非 admin 用户显式清除，防止同一 Session 不登出直接换账号导致 isAdmin 残留
         if ("admin".equals(username)) {
             session.setAttribute("isAdmin", true);
+        } else {
+            session.removeAttribute("isAdmin");
         }
 
         // 防多地登录：将 userId → sessionId 存入 Redis，后续请求校验一致性
