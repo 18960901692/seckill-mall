@@ -28,6 +28,9 @@ import java.math.BigDecimal;
 @RequireAdmin
 public class AdminProductController {
 
+    /** 价格上界：product.price 列是 DECIMAL(10,2)，整数位 8 位 + 小数位 2 位 */
+    private static final BigDecimal MAX_PRICE = new BigDecimal("99999999.99");
+
     @Autowired
     private ProductMapper productMapper;
 
@@ -48,14 +51,16 @@ public class AdminProductController {
         LambdaUpdateWrapper<Product> wrapper = new LambdaUpdateWrapper<>();
         wrapper.eq(Product::getId, id);
         if (req.name != null) {
-            if (req.name.isBlank() || req.name.length() > 100) {
-                throw new BusinessException(ResultCode.PARAM_ERROR, "商品名不能为空且不超过 100 字");
+            if (req.name.isBlank() || req.name.length() > 128) {
+                throw new BusinessException(ResultCode.PARAM_ERROR, "商品名不能为空且不超过 128 字");
             }
             wrapper.set(Product::getName, req.name);
         }
         if (req.price != null) {
-            if (req.price.compareTo(BigDecimal.ZERO) <= 0 || req.price.scale() > 2) {
-                throw new BusinessException(ResultCode.PARAM_ERROR, "价格必须大于 0 且最多两位小数");
+            if (req.price.compareTo(BigDecimal.ZERO) <= 0
+                    || req.price.compareTo(MAX_PRICE) > 0
+                    || req.price.scale() > 2) {
+                throw new BusinessException(ResultCode.PARAM_ERROR, "价格必须在 0.01 ~ 99999999.99 之间，最多两位小数");
             }
             wrapper.set(Product::getPrice, req.price);
         }
