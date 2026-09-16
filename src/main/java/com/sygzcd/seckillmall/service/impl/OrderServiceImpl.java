@@ -11,7 +11,6 @@ import com.sygzcd.seckillmall.entity.Product;
 import com.sygzcd.seckillmall.mapper.OrdersMapper;
 import com.sygzcd.seckillmall.mapper.ProductMapper;
 import com.sygzcd.seckillmall.service.OrderService;
-import com.sygzcd.seckillmall.service.ProductService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.RedisTemplate;
@@ -42,9 +41,6 @@ public class OrderServiceImpl implements OrderService {
 
     @Autowired
     private StringRedisTemplate stringRedisTemplate;
-
-    @Autowired
-    private ProductService productService;
 
     @Autowired
     private TransactionTemplate transactionTemplate;

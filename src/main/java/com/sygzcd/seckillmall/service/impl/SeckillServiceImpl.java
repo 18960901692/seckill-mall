@@ -98,9 +98,9 @@ public class SeckillServiceImpl implements SeckillService {
         //    该方法返回即代表"订单已提交成功"，失败时由其内部完成补偿
         Orders order = seckillWithLock(userId, productId, userKey);
 
-        // 5. 事务提交后的收尾动作（失效缓存 + 发延时消息）
+        // 5. 事务提交后的收尾动作（发延时消息）
         //    刻意放在补偿范围之外：订单已生效，这些动作失败既不能回补库存，也不该把成功伪装成失败
-        afterCommit(productId, order);
+        afterCommit(order);
 
         log.info("秒杀下单成功，订单号: {}, 商品ID: {}, 用户ID: {}", order.getOrderNo(), productId, userId);
         return order;
@@ -236,7 +236,7 @@ public class SeckillServiceImpl implements SeckillService {
      *    与 DTO 里的 name/price/hot/createTime 无关，失效后重建出来逐字段一模一样，纯浪费 Redis DEL
      *    + Pub/Sub 广播成本；库存走独立的 seckill:stock:{pid} 计数器，由秒杀/取消/对账各自维护。
      */
-    private void afterCommit(Long productId, Orders order) {
+    private void afterCommit(Orders order) {
         try {
             orderDelayProducer.sendDelayMessage(order.getOrderNo());
         } catch (Exception e) {
