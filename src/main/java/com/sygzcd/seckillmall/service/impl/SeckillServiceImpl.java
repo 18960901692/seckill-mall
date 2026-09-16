@@ -227,20 +227,16 @@ public class SeckillServiceImpl implements SeckillService {
     }
 
     /**
-     * 事务提交后的收尾动作：失效商品缓存 + 发送延时消息。
+     * 事务提交后的收尾动作：发送延时消息（订单超时自动取消）。
      *
      * 订单此时已生效，因此本方法**只记录日志、绝不向外抛异常**——其失败不得改变下单结果：
-     *  - 缓存失效失败：最坏是短时间内读到旧缓存，TTL 到期后自愈；
      *  - 延时消息发送失败：订单号写入 Redis 重试队列，由 DelayRetryService 定时补偿（第 2 层）；
      *    若连重试队列都写不进去，仍有 OrderReconcileService 每 60s 扫 DB 兜底取消（第 3 层）。
+     *  - 注：不再失效商品缓存。ProductDTO 不含 stock/version，下单/取消改的仅是这两个字段，
+     *    与 DTO 里的 name/price/hot/createTime 无关，失效后重建出来逐字段一模一样，纯浪费 Redis DEL
+     *    + Pub/Sub 广播成本；库存走独立的 seckill:stock:{pid} 计数器，由秒杀/取消/对账各自维护。
      */
     private void afterCommit(Long productId, Orders order) {
-        try {
-            productService.invalidateCache(productId);
-        } catch (Exception e) {
-            log.error("下单后失效商品缓存失败（不影响下单结果），商品ID: {}", productId, e);
-        }
-
         try {
             orderDelayProducer.sendDelayMessage(order.getOrderNo());
         } catch (Exception e) {

@@ -106,8 +106,8 @@ public class OrderServiceImpl implements OrderService {
             // 注意：此处不再直接 INCR Redis 库存。Redis 库存校正统一由 StockReconcileService
             // 每 60s 持 seckill:lock 双检后以 MySQL 为准 SET，避免无锁 INCR 与对账竞态导致虚高（H-4）。
 
-            // 失效商品缓存（Caffeine + Redis + 广播通知其他实例）
-            productService.invalidateCache(productId);
+            // 注意：此处不再失效商品缓存。ProductDTO 不含 stock/version，取消改的仅是这两个字段，
+            // 与 DTO 里的 name/price/hot/createTime 无关，失效后重建出来逐字段一模一样。库存独立维护。
 
             // 删除用户抢购记录，允许重新抢购
             String userKey = USER_SECKILL_KEY + productId + ":" + userId;
