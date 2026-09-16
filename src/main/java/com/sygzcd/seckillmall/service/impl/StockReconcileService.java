@@ -96,19 +96,36 @@ public class StockReconcileService {
                     continue;
                 }
 
-                // 双检：加锁后再查一次，确认仍不一致
-                String redisStockStr2 = stringRedisTemplate.opsForValue().get(stockKey);
-                if (redisStockStr2 != null) {
-                    int redisStock2 = Integer.parseInt(redisStockStr2);
-                    if (mysqlStock.equals(redisStock2)) {
-                        log.info("商品[{}] 加锁后复查已一致（可能秒杀事务已提交），跳过", productId);
+                // 加锁后重查 MySQL：循环外 selectAllStock() 读到的是快照，
+                // 在锁内重查才能真正与秒杀持锁路径串行，避免用旧 MySQL 值 SET 回刚 DECR 的正确 Redis
+                Product fresh = productMapper.selectById(productId);
+                if (fresh == null) {
+                    log.warn("商品[{}] 对账时已不存在（可能已删除），跳过", productId);
+                    skipped++;
+                    continue;
+                }
+                int mysqlNow = fresh.getStock();
+
+                // Redis 双检（原有逻辑）
+                String redisNowStr = stringRedisTemplate.opsForValue().get(stockKey);
+                int redisNow = -1;
+                if (redisNowStr != null) {
+                    try {
+                        redisNow = Integer.parseInt(redisNowStr);
+                    } catch (NumberFormatException e) {
+                        log.error("商品[{}] 加锁后复查 Redis 库存格式异常: {}", productId, redisNowStr);
+                        skipped++;
+                        continue;
+                    }
+                    if (mysqlNow == redisNow) {
+                        log.info("商品[{}] 加锁复查已一致（可能秒杀事务已提交），跳过", productId);
                         continue;
                     }
                 }
 
-                // 校正 Redis 库存为 MySQL 值
-                stringRedisTemplate.opsForValue().set(stockKey, String.valueOf(mysqlStock));
-                log.warn("商品[{}] 库存校正完成 - Redis: {} -> {}（MySQL 为准）", productId, redisStock, mysqlStock);
+                // 校正 Redis 库存为锁内查到的 MySQL 值（新鲜值，非循环外快照）
+                stringRedisTemplate.opsForValue().set(stockKey, String.valueOf(mysqlNow));
+                log.warn("商品[{}] 库存校正完成 - Redis: {} -> {}（锁内 MySQL 为准）", productId, redisNow, mysqlNow);
                 fixed++;
 
             } catch (InterruptedException e) {

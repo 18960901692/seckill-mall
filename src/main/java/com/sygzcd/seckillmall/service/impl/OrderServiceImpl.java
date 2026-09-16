@@ -99,8 +99,12 @@ public class OrderServiceImpl implements OrderService {
 
         // 事务提交后执行以下操作（若事务回滚则不会执行）
         if (cancelled[0]) {
-            // 注意：此处不再直接 INCR Redis 库存。Redis 库存校正统一由 StockReconcileService
-            // 每 60s 持 seckill:lock 双检后以 MySQL 为准 SET，避免无锁 INCR 与对账竞态导致虚高（H-4）。
+            // 注意：取消订单不再自行 INCR Redis 库存，正向库存校正已收敛到 StockReconcileService——
+            // 它持 seckill:lock:{pid} 与秒杀/对账的 Redis 操作串行，锁内重查 MySQL 后以最新值 SET，
+            // 是唯一可信的正向校正写者。
+            // 如果取消自行 INCR，要么需要也持这把锁（引入额外锁竞争，但取消是低频操作不值得），
+            // 要么无锁写（理论上只导致 Redis 短暂偏高、后续对账 SET 回，但不值得为低频场景复杂化）。
+            // 代价：60s 内 Redis 短暂少 1（保守方向，只可能少卖、不可能超卖），对账自动恢复。
 
             // 注意：此处不再失效商品缓存。ProductDTO 不含 stock/version，取消改的仅是这两个字段，
             // 与 DTO 里的 name/price/hot/createTime 无关，失效后重建出来逐字段一模一样。库存独立维护。
