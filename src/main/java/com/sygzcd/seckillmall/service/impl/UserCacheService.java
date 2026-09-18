@@ -4,7 +4,6 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.sygzcd.seckillmall.common.UserDTO;
-import com.sygzcd.seckillmall.config.CacheInvalidateConfig;
 import com.sygzcd.seckillmall.entity.User;
 import com.sygzcd.seckillmall.mapper.UserMapper;
 import lombok.extern.slf4j.Slf4j;
@@ -18,8 +17,12 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * 用户缓存服务
- * 三级缓存：Caffeine → Redis → MySQL
- * 通过 Redis Pub/Sub 实现多实例缓存一致性
+ * 三级缓存：Caffeine（10min TTL） → Redis（30min TTL） → MySQL
+ *
+ * 注意：本类只负责**读写**用户缓存，不提供主动失效机制。
+ * 用户信息变更接口当前不存在，缓存靠 TTL 自然过期。
+ * 若未来新增改资料/改密码接口，需在修改逻辑里手动清缓存
+ * （Caffeine invalidate + Redis delete），并考虑通过 Pub/Sub 广播到多实例。
  */
 @Slf4j
 @Service
@@ -114,25 +117,6 @@ public class UserCacheService {
         String key = USER_KEY + user.getId();
         putToRedis(key, dto);
         userCaffeineCache.put(key, dto);
-    }
-
-    /**
-     * 失效指定用户的缓存（修改、删除时调用）
-     */
-    public void invalidateById(Long id) {
-        String key = USER_KEY + id;
-
-        // 1. 清除 Redis 缓存
-        stringRedisTemplate.delete(key);
-
-        // 2. 失效本地 Caffeine 缓存
-        userCaffeineCache.invalidate(key);
-
-        // 3. 广播通知其他实例清除本地 Caffeine
-        stringRedisTemplate.convertAndSend(
-                CacheInvalidateConfig.USER_CACHE_INVALIDATE_CHANNEL, key);
-
-        log.debug("用户缓存已失效，用户ID: {}", id);
     }
 
     /**
